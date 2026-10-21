@@ -43,6 +43,10 @@ Respuestas del gateway:
 | 429    | `{"error":"rate_limited"}`        | Límite superado                           |
 | 502    | `{"error":"farm_unreachable"}`    | La API del servidor HP no responde        |
 
+**CORS:** el gateway responde al preflight `OPTIONS` (sin API key) y devuelve `Access-Control-Allow-Origin` solo a los orígenes que cumplan `CORS_ORIGIN_REGEX` (por defecto `https://soymas.pro` y `https://www.soymas.pro`; `.*` para cualquiera). Cabeceras permitidas: `X-API-KEY`, `Content-Type`.
+
+> ⚠️ Si el navegador llama directamente al gateway, la `X-API-KEY` queda visible en el JavaScript del frontend. Lo recomendable es que el backend del hosting (p. ej. PHP en Hostinger) llame al gateway desde el servidor y guarde allí la key.
+
 Límites: 30 peticiones/min por IP (ráfaga de 10) y 6 rotaciones/min por dispositivo (ráfaga de 2). La API key **no** se reenvía al servidor HP.
 
 ```bash
@@ -79,7 +83,7 @@ curl -H "X-API-KEY: $API_KEY" https://proxy.tudominio.com/rotate/lg
    cd /opt/proxi-movil
    cp .env.example .env && chmod 600 .env
    openssl rand -hex 32    # pega el resultado en API_KEY
-   nano .env               # PUBLIC_HOSTNAME, API_KEY, FARM_API_HOST
+   nano .env               # PUBLIC_HOSTNAME, API_KEY, FARM_API_HOST, CORS_ORIGIN_REGEX
    ```
 
 3. **Levantar el gateway**:
