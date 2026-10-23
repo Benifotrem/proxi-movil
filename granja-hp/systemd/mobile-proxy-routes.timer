@@ -1,0 +1,10 @@
+[Unit]
+Description=Comprueba cada 30 s el enrutamiento de los moviles
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

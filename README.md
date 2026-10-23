@@ -64,8 +64,25 @@ curl -H "X-API-KEY: $API_KEY" https://proxy.tudominio.com/rotate/lg
 - El dominio gestionado en Cloudflare.
 
 **Servidor HP**
-- La API Flask escuchando en el puerto `5000` en la interfaz de Tailscale/WireGuard, con las rutas `/status`, `/rotate/redmi` y `/rotate/lg`.
+- La API de control (`granja-hp/api.py`, servicio `mobile-proxy-api`) escuchando en el puerto `5000`, accesible por Tailscale/WireGuard, con las rutas `/status`, `/rotate/redmi` y `/rotate/lg`.
 - Recomendado: que su firewall solo permita el puerto 5000 desde la IP del VPS en la red privada.
+
+## Granja HP (`granja-hp/`)
+
+Copia de lo que corre en el servidor HP (`proxi-server`):
+
+| Archivo | Destino en el HP |
+|---------|------------------|
+| `api.py` | `/home/cesar/mobile-proxy/api.py` |
+| `mobile-proxy-routes.sh` | `/usr/local/sbin/mobile-proxy-routes.sh` |
+| `systemd/mobile-proxy-routes.{service,timer}` | `/etc/systemd/system/` |
+
+Los móviles comparten la subred `192.168.42.0/24` del anclaje USB. Sin reglas por origen, el tráfico que 3proxy envía con `-e<IP del móvil>` sale por la ruta por defecto de la LAN y se pierde. `mobile-proxy-routes.sh` (cada 30 s vía timer) identifica cada móvil por su puerto USB físico (Redmi `2-3`, LG `2-4`), mantiene una tabla de rutas por móvil (101/102) con su regla `from <IP>`, y si la IP local cambia actualiza `-e` en su `3proxy.cfg` y reinicia el contenedor.
+
+```bash
+sudo systemctl enable --now mobile-proxy-routes.timer
+systemctl list-timers mobile-proxy-routes.timer
+```
 
 ## Despliegue
 
