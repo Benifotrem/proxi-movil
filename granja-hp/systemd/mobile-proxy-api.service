@@ -1,0 +1,14 @@
+[Unit]
+Description=API de rotacion Mobile Proxy
+After=network.target mobile-routes.service
+
+[Service]
+Type=simple
+User=cesar
+WorkingDirectory=/home/cesar/mobile-proxy
+ExecStart=/usr/bin/python3 /home/cesar/mobile-proxy/api.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
