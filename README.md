@@ -75,13 +75,29 @@ Copia de lo que corre en el servidor HP (`proxi-server`):
 |---------|------------------|
 | `api.py` | `/home/cesar/mobile-proxy/api.py` |
 | `mobile-proxy-routes.sh` | `/usr/local/sbin/mobile-proxy-routes.sh` |
+| `rotate.sh` | `/home/cesar/mobile-proxy/rotate.sh` |
+| `systemd/mobile-proxy-api.service` | `/etc/systemd/system/` |
 | `systemd/mobile-proxy-routes.{service,timer}` | `/etc/systemd/system/` |
+| `3proxy/Dockerfile` | `/home/cesar/mobile-proxy/redmi6/Dockerfile` (imagen `proxy-3proxy`) |
+| `3proxy/{redmi6,lgk9}/3proxy.cfg` | `/home/cesar/mobile-proxy/{redmi6,lgk9}/3proxy.cfg` |
 
 Los móviles comparten la subred `192.168.42.0/24` del anclaje USB. Sin reglas por origen, el tráfico que 3proxy envía con `-e<IP del móvil>` sale por la ruta por defecto de la LAN y se pierde. `mobile-proxy-routes.sh` (cada 30 s vía timer) identifica cada móvil por su puerto USB físico (Redmi `2-3`, LG `2-4`), mantiene una tabla de rutas por móvil (101/102) con su regla `from <IP>`, y si la IP local cambia actualiza `-e` en su `3proxy.cfg` y reinicia el contenedor.
 
 ```bash
 sudo systemctl enable --now mobile-proxy-routes.timer
 systemctl list-timers mobile-proxy-routes.timer
+```
+
+Sustituye al antiguo `mobile-routes.service` (`/usr/local/bin/setup-mobile-routes.sh`), que solo se ejecutaba una vez al arrancar y fallaba si los móviles aún no tenían IP.
+
+Contenedores de 3proxy (red del host, un contenedor por móvil):
+
+```bash
+docker build -t proxy-3proxy /home/cesar/mobile-proxy/redmi6
+docker run -d --name proxy-redmi6 --network host --restart always \
+  -v /home/cesar/mobile-proxy/redmi6/3proxy.cfg:/etc/3proxy/3proxy.cfg proxy-3proxy
+docker run -d --name proxy-lgk9 --network host --restart always \
+  -v /home/cesar/mobile-proxy/lgk9/3proxy.cfg:/etc/3proxy/3proxy.cfg proxy-3proxy
 ```
 
 ## Despliegue

@@ -33,6 +33,8 @@ for d in "${DISPOSITIVOS[@]}"; do
 
   # Tabla propia: todo lo que salga con la IP del móvil va por su interfaz.
   ip route replace default via "$GW" dev "$IFACE" table "$TABLA"
+  # rp_filter laxo: las respuestas llegan por la interfaz del móvil, no por la ruta por defecto.
+  sysctl -qw "net.ipv4.conf.$IFACE.rp_filter=2"
 
   if ! ip rule show pref "$PRIO" | grep -q "from $IP lookup $TABLA"; then
     while ip rule del pref "$PRIO" 2>/dev/null; do :; done
