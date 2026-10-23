@@ -1,0 +1,10 @@
+[Unit]
+Description=Comprueba cada 2 min si hay cambios en main de proxi-movil
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

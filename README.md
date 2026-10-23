@@ -136,12 +136,31 @@ docker run -d --name proxy-lgk9 --network host --restart always \
    ./scripts/healthcheck.sh
    ```
 
+## Despliegue automático (VPS)
+
+El VPS consulta GitHub cada 2 minutos (`proxi-movil-deploy.timer`). Si `main` tiene commits nuevos, `scripts/auto_deploy.sh`:
+
+1. Hace fast-forward a `origin/main` (nunca fuerza; si no es fast-forward, se detiene).
+2. Recrea el gateway solo si cambiaron `docker-compose.yml` o `nginx/`.
+3. Verifica: contenedor healthy, `/healthz` → 200 y `/status` sin key → 401.
+4. Si falla, vuelve al commit anterior y no reintenta ese commit hasta que llegue otro más nuevo.
+
+Instalación (una vez):
+
+```bash
+sudo cp /opt/proxi-movil/systemd/proxi-movil-deploy.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now proxi-movil-deploy.timer
+journalctl -u proxi-movil-deploy -f      # ver despliegues
+```
+
+Flujo de cambios: rama de trabajo → pull request → merge en `main` → el VPS lo despliega solo. Los archivos de `granja-hp/` no se despliegan automáticamente: se copian a mano en el HP.
+
 ## Operación
 
 ```bash
 docker compose logs -f gateway                    # logs del gateway
 journalctl -u cloudflared-proxi-movil -f          # logs del túnel
-git pull && docker compose up -d --force-recreate # actualizar
+sudo systemctl start proxi-movil-deploy     # forzar despliegue ahora
 ```
 
 **Rotar la API key:** edita `API_KEY` en `.env` y ejecuta `docker compose up -d --force-recreate`.
