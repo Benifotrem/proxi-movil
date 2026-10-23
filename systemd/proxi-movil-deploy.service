@@ -1,0 +1,8 @@
+[Unit]
+Description=Despliegue automatico de proxi-movil desde GitHub (main)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/proxi-movil/scripts/auto_deploy.sh
