@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Verifica toda la cadena: contenedor -> puerto local 3105 -> API key -> granja HP -> Cloudflare Tunnel.
+# Verifica toda la cadena: contenedor -> puerto local 3105 -> API key -> granja HP -> Cloudflare Tunnel,
+# y la entrada pública de proxies (contenedor stream -> UFW -> HP).
 #
 # Uso:  ./scripts/healthcheck.sh           (comprobación completa)
 #       ./scripts/healthcheck.sh --local   (omite túnel y hostname público)
@@ -10,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="$REPO_DIR/.env"
 CONTAINER="proxi_movil_gateway"
+STREAM_CONTAINER="proxi_movil_stream"
 LOCAL_URL="http://127.0.0.1:3105"
 LOCAL_ONLY=0
 [[ "${1:-}" == "--local" ]] && LOCAL_ONLY=1
@@ -26,6 +28,9 @@ set -a
 set +a
 TUNNEL_NAME="${TUNNEL_NAME:-proxi-movil}"
 FARM_API_PORT="${FARM_API_PORT:-5000}"
+PROXY_PORTS="${PROXY_PORTS:-20001-20040}"
+PRIMER_PUERTO="${PROXY_PORTS%%-*}"
+ULTIMO_PUERTO="${PROXY_PORTS##*-}"
 
 # Código HTTP de una petición; la API key se pasa por descriptor para no exponerla en 'ps'.
 http_code() {
@@ -72,6 +77,28 @@ fi
 
 code="$(http_code "$LOCAL_URL/status" 1 15)"
 [[ "$code" == 200 ]] && ok "/status con API key -> 200" || fail "/status con API key -> $code"
+
+echo "== Entrada de proxies ($PROXY_PORTS) =="
+state="$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$STREAM_CONTAINER" 2>/dev/null)"
+case "$state" in
+    "running healthy") ok "Contenedor $STREAM_CONTAINER: running (healthy)" ;;
+    running*)          fail "Contenedor $STREAM_CONTAINER: $state" ;;
+    *)                 fail "Contenedor $STREAM_CONTAINER no está en ejecución" ;;
+esac
+if command -v ufw >/dev/null 2>&1 && [[ $EUID -eq 0 ]]; then
+    if ufw status | grep -qE "^$PRIMER_PUERTO:$ULTIMO_PUERTO/tcp +ALLOW"; then
+        ok "UFW permite $PRIMER_PUERTO:$ULTIMO_PUERTO/tcp"
+    else
+        fail "UFW no permite $PRIMER_PUERTO:$ULTIMO_PUERTO/tcp (sudo ufw allow $PRIMER_PUERTO:$ULTIMO_PUERTO/tcp)"
+    fi
+else
+    skip "UFW no comprobado (requiere root)"
+fi
+if timeout 3 bash -c "</dev/tcp/${FARM_API_HOST}/${PRIMER_PUERTO}" 2>/dev/null; then
+    ok "HP acepta conexiones en el puerto $PRIMER_PUERTO (3proxy del primer móvil)"
+else
+    fail "HP no acepta conexiones en el puerto $PRIMER_PUERTO (proxi-granja / 3proxy en el HP)"
+fi
 
 echo "== Cloudflare Tunnel =="
 if [[ $LOCAL_ONLY == 1 ]]; then

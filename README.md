@@ -1,181 +1,182 @@
 # proxi-movil
 
-Capa pública de la granja de proxies móviles. Expone la API de gestión y control (estado y rotación de IP) del servidor HP a través de Cloudflare, protegida con API key, sin tocar las aplicaciones que ya corren en el VPS (`syry`, `digamelo`).
+Granja de proxies móviles 4G: cada cliente alquila un móvil/SIM dedicado (1:1) con HTTP y SOCKS5 en el mismo puerto, usuario y contraseña propios, y rotación de IP a demanda. Dos piezas:
+
+- **VPS** (este directorio): API de control publicada en Cloudflare y entrada pública de los puertos de proxy. Convive con `syry` y `digamelo` sin tocarlos.
+- **Servidor HP** (`granja-hp/`): los móviles por anclaje USB, cada uno aislado en su propio network namespace con su 3proxy.
 
 ## Arquitectura
 
 ```text
-Cliente ──HTTPS──> Cloudflare ──Tunnel──> cloudflared (host VPS, servicio cloudflared-proxi-movil)
-                                              │
-                                              ▼
-                                   127.0.0.1:3105  (contenedor proxi_movil_gateway, nginx)
-                                              │  valida X-API-KEY, rate limit, solo 3 rutas
-                                              ▼
-                              Tailscale / WireGuard (VPS <-> servidor HP en LAN)
-                                              │
-                                              ▼
-                              API Flask de la granja  <FARM_API_HOST>:5000
-                                ├── 3proxy Redmi 6  :8081
-                                └── 3proxy LG K9    :8082
+                    API de control (backend PHP en Hostinger)
+                                    │ HTTPS + X-API-KEY
+                                    ▼
+Cloudflare ──Tunnel──> cloudflared ──> 127.0.0.1:3105  gateway (nginx): API key, rate limit, CORS
+                                                │
+Clientes (AdsPower, scripts…)                   │
+   │ HTTP/SOCKS5 user:pass                      │
+   ▼                                            │
+VPS :20001-20040  stream (nginx, UFW)           │
+   │                                            │
+   └────────────── Tailscale ───────────────────┤
+                                                ▼
+                         HP (100.118.170.11)
+                           :5000  API de la granja (api.py)
+                           :2000N ──DNAT──> namespace modem_X  10.200.N.2:3128  3proxy (auto)
+                                                   └── mdmN (USB) ── móvil ── 4G
 ```
 
-- **No se abre ningún puerto nuevo**: el gateway escucha solo en `127.0.0.1:3105` y el túnel sale del VPS hacia Cloudflare. UFW sigue con 22/80/443.
-- **`syry_nginx` no se modifica ni se reinicia**: el túnel no pasa por los puertos 80/443.
-- **Tráfico de proxy (3proxy) no se expone por Cloudflare**: solo la API HTTP de gestión.
+- El tráfico de proxy **no pasa por Cloudflare** (no admite CONNECT/SOCKS): entra por los puertos `20001-20040` del VPS, abiertos en UFW.
+- La API de control no abre puertos: `127.0.0.1:3105` + Cloudflare Tunnel.
+- `syry_nginx` y los puertos 80/443 no se tocan.
 
-## Endpoints públicos
+## API de control
 
-Todas las peticiones requieren la cabecera `X-API-KEY`.
+Todas las peticiones requieren la cabecera `X-API-KEY` y se hacen **desde el backend** (nunca desde el navegador).
 
-| Método | Ruta            | Descripción                                        |
-|--------|-----------------|----------------------------------------------------|
-| GET    | `/status`       | Estado e IP pública actual de cada módem           |
-| GET    | `/rotate/redmi` | Rota la IP del Redmi 6 (datos móviles off/on, ADB) |
-| GET    | `/rotate/lg`    | Rota la IP del LG K9 (datos móviles off/on, ADB)   |
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/status` | Por móvil: puerto, IP pública, `online`, `usb_present` |
+| GET | `/rotate/<id>` | Rota la IP del móvil `<id>` del inventario |
+| GET | `/usage` | Tráfico acumulado por móvil (`down_bytes`, `up_bytes`, `total_bytes`) |
+| GET | `/health` | Estado de la granja sin consultar IPs (rápido) |
 
-Respuestas del gateway:
+Respuesta de `/rotate/<id>`:
 
-| Código | Cuerpo                            | Motivo                                    |
-|--------|-----------------------------------|-------------------------------------------|
-| 401    | `{"error":"unauthorized"}`        | Falta la API key o no es válida           |
-| 403    | `{"error":"forbidden"}`           | Método distinto de GET, o `/healthz` desde internet |
-| 404    | `{"error":"not_found"}`           | Cualquier otra ruta                       |
-| 429    | `{"error":"rate_limited"}`        | Límite superado                           |
-| 502    | `{"error":"farm_unreachable"}`    | La API del servidor HP no responde        |
-
-**CORS:** el gateway responde al preflight `OPTIONS` (sin API key) y devuelve `Access-Control-Allow-Origin` solo a los orígenes que cumplan `CORS_ORIGIN_REGEX` (por defecto `https://soymas.pro` y `https://www.soymas.pro`; `.*` para cualquiera). Cabeceras permitidas: `X-API-KEY`, `Content-Type`.
-
-> ⚠️ Si el navegador llama directamente al gateway, la `X-API-KEY` queda visible en el JavaScript del frontend. Lo recomendable es que el backend del hosting (p. ej. PHP en Hostinger) llame al gateway desde el servidor y guarde allí la key.
-
-Límites: 30 peticiones/min por IP (ráfaga de 10) y 6 rotaciones/min por dispositivo (ráfaga de 2). La API key **no** se reenvía al servidor HP.
-
-```bash
-curl -H "X-API-KEY: $API_KEY" https://proxy.tudominio.com/status
-curl -H "X-API-KEY: $API_KEY" https://proxy.tudominio.com/rotate/redmi
-curl -H "X-API-KEY: $API_KEY" https://proxy.tudominio.com/rotate/lg
+```json
+{"status": "success", "device": "modem_2_3", "port": 20001, "old_ip": "90.167.42.37",
+ "new_ip": "84.78.251.40", "changed": true, "duration_ms": 4200}
 ```
 
-## Requisitos
+| Código | Motivo |
+|--------|--------|
+| 401 | Falta la API key o no es válida |
+| 403 | Método distinto de GET, o `/healthz` desde internet |
+| 404 | Ruta o móvil inexistente |
+| 409 | Ya hay una rotación en curso de ese móvil |
+| 429 | Rotación antes de 10 s desde la anterior (`retry_after`), o límite del gateway |
+| 502 | La API del HP no responde, o fallo de ADB |
+| 504 | Tras rotar, el móvil no recuperó IP pública en 25 s |
 
-**VPS**
-- Docker con el plugin `docker compose`.
-- `curl`, `ss` (iproute2) y `systemd`.
-- Conectividad con el servidor HP por Tailscale o WireGuard.
-- El dominio gestionado en Cloudflare.
+Límites del gateway: 30 peticiones/min por IP (ráfaga de 10) y 6 rotaciones/min por móvil (ráfaga de 2).
 
-**Servidor HP**
-- La API de control (`granja-hp/api.py`, servicio `mobile-proxy-api`) escuchando en el puerto `5000`, accesible por Tailscale/WireGuard, con las rutas `/status`, `/rotate/redmi` y `/rotate/lg`.
-- Recomendado: que su firewall solo permita el puerto 5000 desde la IP del VPS en la red privada.
+**Tráfico y límite mensual (350 GB por puerto):** `/usage` devuelve contadores **acumulados desde la instalación**, que no se reinician. Para el consumo del ciclo de un cliente, el backend guarda `total_bytes` al inicio de su ciclo y resta. Así cada cliente puede tener su propia fecha de facturación.
 
-## Granja HP (`granja-hp/`)
+**Change IP URL:** la sirve el backend PHP con un token por cliente (`https://soymas.pro/api/change/<token>`), que valida el token y llama a `/rotate/<id>` desde el servidor. La `X-API-KEY` nunca sale del backend.
 
-Copia de lo que corre en el servidor HP (`proxi-server`):
+**CORS:** solo para orígenes que cumplan `CORS_ORIGIN_REGEX` (por defecto `https://soymas.pro`); es una medida de respaldo.
 
-| Archivo | Destino en el HP |
-|---------|------------------|
-| `api.py` | `/home/cesar/mobile-proxy/api.py` |
-| `mobile-proxy-routes.sh` | `/usr/local/sbin/mobile-proxy-routes.sh` |
-| `rotate.sh` | `/home/cesar/mobile-proxy/rotate.sh` |
-| `systemd/mobile-proxy-api.service` | `/etc/systemd/system/` |
-| `systemd/mobile-proxy-routes.{service,timer}` | `/etc/systemd/system/` |
-| `3proxy/Dockerfile` | `/home/cesar/mobile-proxy/redmi6/Dockerfile` (imagen `proxy-3proxy`) |
-| `3proxy/{redmi6,lgk9}/3proxy.cfg` | `/home/cesar/mobile-proxy/{redmi6,lgk9}/3proxy.cfg` |
+## Acceso de los clientes al proxy
 
-Los móviles comparten la subred `192.168.42.0/24` del anclaje USB. Sin reglas por origen, el tráfico que 3proxy envía con `-e<IP del móvil>` sale por la ruta por defecto de la LAN y se pierde. `mobile-proxy-routes.sh` (cada 30 s vía timer) identifica cada móvil por su puerto USB físico (Redmi `2-3`, LG `2-4`), mantiene una tabla de rutas por móvil (101/102) con su regla `from <IP>`, y si la IP local cambia actualiza `-e` en su `3proxy.cfg` y reinicia el contenedor.
-
-```bash
-sudo systemctl enable --now mobile-proxy-routes.timer
-systemctl list-timers mobile-proxy-routes.timer
+```text
+host: <IP pública del VPS>   puerto: 2000N   usuario/contraseña: los de su móvil
 ```
 
-Sustituye al antiguo `mobile-routes.service` (`/usr/local/bin/setup-mobile-routes.sh`), que solo se ejecutaba una vez al arrancar y fallaba si los móviles aún no tenían IP.
+HTTP y SOCKS5 en el mismo puerto (3proxy `auto`). Ejemplo: `curl -x http://usuario:clave@VPS:20001 https://api.ipify.org`.
 
-Contenedores de 3proxy (red del host, un contenedor por móvil):
+## VPS
 
-```bash
-docker build -t proxy-3proxy /home/cesar/mobile-proxy/redmi6
-docker run -d --name proxy-redmi6 --network host --restart always \
-  -v /home/cesar/mobile-proxy/redmi6/3proxy.cfg:/etc/3proxy/3proxy.cfg proxy-3proxy
-docker run -d --name proxy-lgk9 --network host --restart always \
-  -v /home/cesar/mobile-proxy/lgk9/3proxy.cfg:/etc/3proxy/3proxy.cfg proxy-3proxy
-```
+### Requisitos
 
-## Despliegue
+- Docker con `docker compose`, `curl`, `ss`, `systemd`.
+- Tailscale conectado al HP.
+- Dominio en Cloudflare.
 
-1. **Conectar VPS y HP** (ejemplo con Tailscale, en ambas máquinas):
-   ```bash
-   curl -fsSL https://tailscale.com/install.sh | sh
-   sudo tailscale up
-   tailscale ip -4        # en el HP: anota la IP 100.x.y.z
-   ```
-   Desde el VPS: `curl http://100.x.y.z:5000/status` debe responder.
+### Despliegue inicial
 
-2. **Clonar y configurar**:
+1. Tailscale en VPS y HP (`curl -fsSL https://tailscale.com/install.sh | sh`; en el VPS: `tailscale up --accept-dns=false`).
+2. Clonar y configurar:
    ```bash
    git clone git@github.com:Benifotrem/proxi-movil.git /opt/proxi-movil
    cd /opt/proxi-movil
    cp .env.example .env && chmod 600 .env
-   openssl rand -hex 32    # pega el resultado en API_KEY
-   nano .env               # PUBLIC_HOSTNAME, API_KEY, FARM_API_HOST, CORS_ORIGIN_REGEX
+   nano .env      # PUBLIC_HOSTNAME, API_KEY (openssl rand -hex 32), FARM_API_HOST, PROXY_PORTS
    ```
-
-3. **Levantar el gateway**:
+3. Levantar y abrir los puertos de proxy:
    ```bash
    docker compose up -d
-   ./scripts/healthcheck.sh --local
+   sudo ufw allow 20001:20040/tcp
    ```
+4. Cloudflare Tunnel: `sudo ./scripts/setup_cloudflare_tunnel.sh` (no sobrescribe DNS ni toca otros `cloudflared`).
+5. Verificar: `./scripts/healthcheck.sh`.
 
-4. **Crear el Cloudflare Tunnel** (instala `cloudflared` si falta, crea el túnel y el CNAME, e instala el servicio `cloudflared-proxi-movil`):
-   ```bash
-   sudo ./scripts/setup_cloudflare_tunnel.sh
-   ```
-   El script no sobrescribe registros DNS existentes ni toca otros servicios `cloudflared`.
+### Despliegue automático
 
-5. **Verificar toda la cadena**:
-   ```bash
-   ./scripts/healthcheck.sh
-   ```
+El timer `proxi-movil-deploy` consulta `main` cada 2 minutos. `scripts/auto_deploy.sh`:
 
-## Despliegue automático (VPS)
-
-El VPS consulta GitHub cada 2 minutos (`proxi-movil-deploy.timer`). Si `main` tiene commits nuevos, `scripts/auto_deploy.sh`:
-
-1. Hace fast-forward a `origin/main` (nunca fuerza; si no es fast-forward, se detiene).
-2. Recrea el gateway solo si cambiaron `docker-compose.yml` o `nginx/`.
-3. Verifica: contenedor healthy, `/healthz` → 200 y `/status` sin key → 401.
-4. Si falla, vuelve al commit anterior y no reintenta ese commit hasta que llegue otro más nuevo.
-
-Instalación (una vez):
+1. Hace fast-forward a `origin/main`; si no es fast-forward, se detiene.
+2. Recrea los contenedores solo si cambiaron `docker-compose.yml` o `nginx/`.
+3. Verifica: contenedores healthy, `/healthz` → 200 y `/status` sin key → 401.
+4. Si falla, vuelve al commit anterior y no reintenta ese commit hasta que llegue uno más nuevo.
 
 ```bash
-sudo cp /opt/proxi-movil/systemd/proxi-movil-deploy.{service,timer} /etc/systemd/system/
+sudo cp systemd/proxi-movil-deploy.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now proxi-movil-deploy.timer
-journalctl -u proxi-movil-deploy -f      # ver despliegues
+journalctl -u proxi-movil-deploy -f
 ```
 
-Flujo de cambios: rama de trabajo → pull request → merge en `main` → el VPS lo despliega solo. Los archivos de `granja-hp/` no se despliegan automáticamente: se copian a mano en el HP.
+Flujo: rama → pull request → merge en `main` → despliegue automático. **`granja-hp/` no se despliega solo**: se instala en el HP con `granja-hp/instalar.sh`.
 
-## Operación
+### Operación
 
 ```bash
-docker compose logs -f gateway                    # logs del gateway
-journalctl -u cloudflared-proxi-movil -f          # logs del túnel
-sudo systemctl start proxi-movil-deploy     # forzar despliegue ahora
+docker compose logs -f gateway            # API de control
+docker compose logs -f stream             # entrada de proxies
+journalctl -u cloudflared-proxi-movil -f  # túnel
+sudo systemctl start proxi-movil-deploy   # forzar despliegue
 ```
 
-**Rotar la API key:** edita `API_KEY` en `.env` y ejecuta `docker compose up -d --force-recreate`.
+Rotar la API key: editar `API_KEY` en `.env` y `docker compose up -d --force-recreate gateway`.
 
-**Desinstalar:**
+## Granja HP (`granja-hp/`)
+
+### Diseño
+
+Los Android dan al HP una IP aleatoria dentro de la misma subred de anclaje (`192.168.42.0/24`; los Android 11+ incluso cambian la subred). Con muchos móviles, dos interfaces acaban con la misma IP. Por eso **cada móvil vive en su propio network namespace**, y su IP local deja de importar:
+
+| Pieza | Detalle |
+|-------|---------|
+| Inventario | `/etc/proxi-granja/modems.conf`: `id usb adb_serial puerto rotacion` (una línea por móvil) |
+| Credenciales | `/etc/proxi-granja/credentials` (root:cesar 0640, fuera del repo): `id usuario contraseña` |
+| Namespace | `modem_<usb>`; dentro, la interfaz USB renombrada `mdm<N>` (DHCP con `dhcpcd`) y `lan0` 10.200.N.2/30 |
+| 3proxy | `proxi-modem-proxy@<id>`: `auto` (HTTP+SOCKS5) con `auth strong` en 10.200.N.2:3128, ejecutado con `NetworkNamespacePath=` desde el rootfs de la imagen `proxy-3proxy` |
+| Entrada | `tailscale0:2000N` → DNAT → 10.200.N.2:3128 (tabla nft `proxi_granja`) |
+| Sincronización | `proxi-granja sync` cada 30 s (timer) y al conectar un móvil (udev): crea namespaces, mueve interfaces, genera configs, aplica NAT, cuenta tráfico |
+| Tráfico | `/var/lib/proxi-granja/trafico.db`: bytes acumulados por móvil (contador del veth `pg<N>`) |
+| networkd | `05-proxi-modems.network`: ignora las interfaces de anclaje USB (`rndis_host`, `cdc_ether`, `cdc_ncm`) |
+| API | `proxi-granja-api` (usuario `cesar`), `/opt/proxi-granja/api.py`, puerto 5000 |
+
+`N = puerto - 20000`. Rotación por `airplane` (modo avión solo para la radio celular, `airplane_mode_radios=cell`) o `data` (`svc data`, Android < 8).
+
+### Instalación / actualización
+
 ```bash
-docker compose down
-sudo systemctl disable --now cloudflared-proxi-movil
-sudo rm /etc/systemd/system/cloudflared-proxi-movil.service && sudo systemctl daemon-reload
-sudo cloudflared tunnel delete proxi-movil        # y borra el CNAME en Cloudflare
+sudo ./granja-hp/instalar.sh          # copia archivos y prepara 3proxy; no activa nada
+sudo nano /etc/proxi-granja/modems.conf /etc/proxi-granja/credentials
+sudo networkctl reload
+sudo systemctl enable --now proxi-granja-sync.timer proxi-granja-api.service
+```
+
+### Añadir un móvil
+
+1. Conectarlo por USB con el anclaje activado y la depuración USB autorizada.
+2. Puerto USB: `readlink -f /sys/class/net/<iface>/device` (por ejemplo, `.../2-5/2-5:1.0` → `2-5`); serial: `adb devices -l`.
+3. Añadir la línea a `modems.conf` y sus credenciales a `credentials`.
+4. Esperar 30 s o ejecutar `sudo systemctl start proxi-granja-sync`. Sin reiniciar nada más.
+
+### Diagnóstico
+
+```bash
+cat /run/proxi-granja/estado.json                     # estado por móvil
+ip netns list; sudo ip -n modem_2_3 addr              # namespaces
+systemctl status 'proxi-modem-*'                      # DHCP y 3proxy
+sudo nft list table ip proxi_granja                   # DNAT
+journalctl -u proxi-granja-sync -n 50                 # sincronización
 ```
 
 ## Notas de seguridad
 
-- `.env` contiene la API key: no lo subas al repositorio (permisos `600`).
-- Docker se salta UFW en los puertos publicados; por eso el puerto se publica explícitamente en `127.0.0.1:3105`. `healthcheck.sh` comprueba que no quede expuesto en `0.0.0.0`.
-- La IP real del cliente se toma de `CF-Connecting-IP`; `/healthz` solo responde a orígenes locales.
-- Opcional: añade en Cloudflare una regla WAF o de rate limiting para el subdominio como segunda capa.
+- `.env` (VPS) y `/etc/proxi-granja/credentials` (HP) contienen secretos: nunca en el repositorio.
+- Docker se salta UFW en los puertos publicados: el gateway se publica solo en `127.0.0.1:3105` y el contenedor `stream` usa la red del host para quedar sujeto a UFW.
+- 3proxy solo escucha dentro de cada namespace y solo es accesible por Tailscale (DNAT en `tailscale0`), no desde la LAN.
+- La IP real del cliente de la API se toma de `CF-Connecting-IP`; `/healthz` solo responde a orígenes locales.

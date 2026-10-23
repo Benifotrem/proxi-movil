@@ -1,0 +1,14 @@
+[Unit]
+Description=3proxy del movil %i (dentro de su namespace)
+After=proxi-granja-sync.service
+
+[Service]
+NetworkNamespacePath=/run/netns/%i
+RootDirectory=/opt/proxi-granja/3proxy-rootfs
+BindReadOnlyPaths=/etc/proxi-granja/3proxy:/etc/proxi-granja
+ExecStart=/usr/bin/3proxy /etc/proxi-granja/%i.cfg
+User=proxi3proxy
+Group=proxi3proxy
+NoNewPrivileges=true
+Restart=always
+RestartSec=3

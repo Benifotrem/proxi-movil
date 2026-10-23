@@ -1,8 +1,8 @@
 [Unit]
-Description=Comprueba cada 30 s el enrutamiento de los moviles
+Description=Sincroniza la granja de moviles cada 30 s
 
 [Timer]
-OnBootSec=20s
+OnBootSec=15s
 OnUnitActiveSec=30s
 AccuracySec=5s
 

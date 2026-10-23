@@ -1,7 +1,9 @@
 # Gateway público de la granja de proxies móviles.
-# - Escucha SOLO en 127.0.0.1:3105 (no toca syry_nginx ni los puertos 80/443).
-# - Cloudflare Tunnel (cloudflared en el host) entrega el tráfico a 127.0.0.1:3105.
-# - Nginx valida X-API-KEY y reenvía a la API Flask del servidor HP por Tailscale/WireGuard.
+# - gateway: API de control. Escucha SOLO en 127.0.0.1:3105 (no toca syry_nginx ni los puertos 80/443).
+#   Cloudflare Tunnel (cloudflared en el host) entrega el tráfico a 127.0.0.1:3105.
+#   Nginx valida X-API-KEY y reenvía a la API de la granja en el HP por Tailscale.
+# - stream: tráfico de proxy de los clientes. Escucha en PROXY_PORTS (red del host, sujeto a UFW)
+#   y reenvía cada puerto al HP por Tailscale.
 name: proxi-movil
 
 services:
@@ -26,6 +28,33 @@ services:
       - no-new-privileges:true
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  stream:
+    image: nginx:1.27-alpine
+    container_name: proxi_movil_stream
+    restart: unless-stopped
+    # Red del host: los puertos quedan sujetos a UFW (los puertos publicados por Docker se lo saltarían).
+    network_mode: host
+    environment:
+      FARM_API_HOST: ${FARM_API_HOST:?Define FARM_API_HOST en .env}
+      PROXY_PORTS: ${PROXY_PORTS:-20001-20040}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+      NGINX_ENVSUBST_FILTER: "^(FARM_API_HOST|PROXY_PORTS)$"
+    volumes:
+      - ./nginx/stream.conf:/etc/nginx/templates/nginx.conf.template:ro
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 $${PROXY_PORTS%%-*}"]
       interval: 30s
       timeout: 5s
       retries: 3

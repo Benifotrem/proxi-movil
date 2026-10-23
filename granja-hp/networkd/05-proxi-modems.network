@@ -1,0 +1,6 @@
+# Las interfaces de anclaje USB de los móviles las gestiona proxi-granja (namespaces), no networkd.
+[Match]
+Driver=rndis_host cdc_ether cdc_ncm
+
+[Link]
+Unmanaged=yes
