@@ -8,6 +8,8 @@
 #   - DNAT del puerto público (llega por tailscale0) a 10.200.N.2:3128;
 #   - contabilidad de tráfico acumulado (bytes del veth pg<N>) en /var/lib/proxi-granja/trafico.db;
 #   - límite de velocidad (FUP) si existe /var/lib/proxi-granja/limites/<id> (kbps; lo escribe la API);
+#   - anclaje USB: si el móvil está en ADB pero sin interfaz de red, se reactiva con
+#     "svc usb setFunctions rndis" (Android 8+; como mucho un intento por minuto);
 #   - credenciales de 3proxy: /var/lib/proxi-granja/credenciales/<id> (las genera la API) o, si no hay,
 #     /etc/proxi-granja/credentials (alta manual).
 # N = puerto_publico - 20000. Lo ejecuta proxi-granja-sync.timer cada 30 s y udev al conectar un móvil.
@@ -27,6 +29,10 @@ BASE_PUERTO=20000
 PUERTO_INTERNO=3128
 ENTRADA_IFACE="${PROXI_GRANJA_ENTRADA:-tailscale0}"
 
+# Usuario con el que corre ADB (el de la API): su servidor ADB y sus claves autorizadas.
+ADB_USER=""
+[[ -r "$CONF_DIR/granja.env" ]] && . "$CONF_DIR/granja.env"
+
 log() { echo "[$1] ${*:2}" >&2; }
 
 iface_por_usb() {
@@ -42,6 +48,27 @@ iface_por_usb() {
             return
         fi
     done
+}
+
+adb_como_api() {
+    [[ -n "$ADB_USER" ]] || return 1
+    local home
+    home="$(getent passwd "$ADB_USER" | cut -d: -f6)"
+    timeout 15 runuser -u "$ADB_USER" -- env HOME="$home" ADB_VENDOR_KEYS="$CONF_DIR/adb_keys" adb "$@"
+}
+
+reactivar_anclaje() {
+    # El modo USB vuelve a "solo carga" tras reconectar el cable si el móvil está bloqueado o
+    # su Android no lo restaura solo. Se fuerza el anclaje por ADB, como mucho una vez por minuto.
+    local id="$1" serial="$2" marca="$STATE_DIR/$id.anclaje"
+    [[ -n "$serial" ]] || return
+    if [[ -f "$marca" ]] && (( $(date +%s) - $(stat -c %Y "$marca") < 60 )); then
+        return
+    fi
+    touch "$marca"
+    [[ "$(adb_como_api -s "$serial" get-state 2>/dev/null)" == device ]] || return
+    adb_como_api -s "$serial" shell svc usb setFunctions rndis >/dev/null 2>&1 \
+        && log "$id" "anclaje USB reactivado por ADB"
 }
 
 credencial() {
@@ -101,7 +128,7 @@ asegurar_servicio() {
 }
 
 configurar_modem() {
-    local id="$1" usb="$2" puerto="$3"
+    local id="$1" usb="$2" puerto="$3" serial="$4"
     local n=$((puerto - BASE_PUERTO))
     local ns="$id" hv="pg$n" md="mdm$n"
 
@@ -132,6 +159,8 @@ configurar_modem() {
     if ip -n "$ns" link show "$md" >/dev/null 2>&1; then
         presente=1
         ip -n "$ns" link set "$md" up
+    else
+        reactivar_anclaje "$id" "$serial"
     fi
 
     echo "IFACE=$md" > "$STATE_DIR/$id.env"
@@ -250,7 +279,7 @@ sync() {
     local estado="{" sep="" frag id usb serial puerto rot
     while read -r id usb serial puerto rot; do
         [[ "$id" =~ ^[a-z0-9_]{1,15}$ ]] || { log "$id" "id inválido (a-z0-9_, máx. 15)"; continue; }
-        frag="$(configurar_modem "$id" "$usb" "$puerto")"
+        frag="$(configurar_modem "$id" "$usb" "$puerto" "$serial")"
         [[ -n "$frag" ]] && { estado+="$sep$frag"; sep=","; }
     done < <(grep -vE '^[[:space:]]*(#|$)' "$INVENTARIO")
     estado+="}"

@@ -43,6 +43,12 @@ fi
 chown "root:$API_USER" /etc/proxi-granja/credentials
 chmod 0640 /etc/proxi-granja/credentials
 
+# Usuario con el que la sincronización ejecuta ADB (el mismo que la API).
+if [[ ! -f /etc/proxi-granja/granja.env ]]; then
+    printf '# Ajustes de proxi-granja sync\nADB_USER=%s\n' "$API_USER" > /etc/proxi-granja/granja.env
+    chmod 0644 /etc/proxi-granja/granja.env
+fi
+
 # Programas.
 install -m 0755 "$REPO/proxi-granja.sh" /usr/local/sbin/proxi-granja
 install -m 0644 "$REPO/api.py" /opt/proxi-granja/api.py
