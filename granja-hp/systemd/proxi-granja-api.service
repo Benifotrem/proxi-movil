@@ -5,6 +5,8 @@ After=network.target proxi-granja-sync.service
 [Service]
 Type=simple
 User=cesar
+# Claves ADB adicionales (*.adb_key): móviles autorizados desde otro equipo.
+Environment=ADB_VENDOR_KEYS=/etc/proxi-granja/adb_keys
 ExecStart=/usr/bin/python3 /opt/proxi-granja/api.py
 Restart=always
 RestartSec=3
