@@ -1,0 +1,2 @@
+# Al conectar un móvil por anclaje USB, sincronizar la granja sin esperar al timer.
+ACTION=="add", SUBSYSTEM=="net", DRIVERS=="rndis_host|cdc_ether|cdc_ncm", RUN+="/usr/bin/systemctl --no-block start proxi-granja-sync.service"

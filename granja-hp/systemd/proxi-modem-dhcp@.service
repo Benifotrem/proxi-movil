@@ -1,0 +1,10 @@
+[Unit]
+Description=DHCP del movil %i (dentro de su namespace)
+After=proxi-granja-sync.service
+
+[Service]
+EnvironmentFile=/run/proxi-granja/%i.env
+NetworkNamespacePath=/run/netns/%i
+ExecStart=/usr/sbin/dhcpcd --nobackground --ipv4only --noipv4ll --nohook resolv.conf --nohook hostname --quiet ${IFACE}
+Restart=always
+RestartSec=5

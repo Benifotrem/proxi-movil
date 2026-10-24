@@ -1,0 +1,8 @@
+[Unit]
+Description=Sincroniza la granja de moviles con el inventario
+After=network-online.target docker.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/proxi-granja sync

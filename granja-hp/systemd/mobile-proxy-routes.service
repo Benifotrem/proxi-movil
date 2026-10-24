@@ -1,8 +1,0 @@
-[Unit]
-Description=Enrutamiento por origen de los moviles y sincronizacion de 3proxy
-After=network-online.target docker.service
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/mobile-proxy-routes.sh
