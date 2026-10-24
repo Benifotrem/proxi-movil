@@ -180,7 +180,7 @@ sudo systemctl enable --now proxi-granja-sync.timer proxi-granja-sync.path proxi
 
 - **Android 8 o superior**, con *Opciones de desarrollador → Configuración USB predeterminada → RNDIS (USB Ethernet)*. Así el anclaje USB se reactiva solo cada vez que el móvil se reconecta (corte de luz, reinicio del HP, cable). Comprobación: desenchufar y volver a enchufar; `adb -s <serial> shell getprop sys.usb.config` debe dar `rndis,adb` sin tocar el móvil.
 - En Android 7 o anterior (por ejemplo, el LG K9 de pruebas) el anclaje **vuelve a MTP al reconectar** y hay que reactivarlo a mano: `svc usb setFunction rndis` no arranca el anclaje completo en esas versiones.
-- Depuración USB activada y el HP autorizado de forma permanente.
+- Depuración USB activada y el HP autorizado de forma permanente. Si el aviso de autorización no puede aceptarse en el móvil (pantalla rota) pero sí se autorizó desde otro equipo (p. ej. el PC con scrcpy), copiar la clave privada de ese equipo (`%USERPROFILE%\.android\adbkey` en Windows) a `/etc/proxi-granja/adb_keys/<nombre>.adb_key` (cesar, 0600) y reiniciar el servidor ADB (`adb kill-server`): la granja la usa además de la suya (`ADB_VENDOR_KEYS`).
 - Si `/health` pasa a `degraded` (`modems_with_network` < `modems_total`), algún móvil ha perdido la red: el backend debe avisar al administrador.
 
 ### Añadir un móvil

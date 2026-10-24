@@ -28,6 +28,8 @@ install -d -m 0755 -o "$API_USER" /var/lib/proxi-granja/limites
 # Credenciales de 3proxy generadas por la API (GET /credentials/<id>/new).
 install -d -m 0700 -o "$API_USER" /var/lib/proxi-granja/credenciales
 install -d -m 0750 -g proxi3proxy /etc/proxi-granja/3proxy
+# Claves ADB adicionales (*.adb_key), p. ej. la del PC desde el que se autorizó un móvil con scrcpy.
+install -d -m 0700 -o "$API_USER" /etc/proxi-granja/adb_keys
 
 # Inventario y credenciales: solo se crean si no existen (son datos de producción).
 if [[ ! -f /etc/proxi-granja/modems.conf ]]; then
@@ -60,6 +62,7 @@ install -d "$ROOTFS/etc/proxi-granja"
 install -m 0644 "$REPO"/systemd/proxi-*.service "$REPO"/systemd/proxi-*.timer "$REPO"/systemd/proxi-*.path /etc/systemd/system/
 sed -i "s/^User=cesar$/User=$API_USER/" /etc/systemd/system/proxi-granja-api.service
 install -m 0644 "$REPO/udev/90-proxi-granja.rules" /etc/udev/rules.d/
+install -m 0644 "$REPO/profile.d/proxi-granja-adb.sh" /etc/profile.d/
 install -m 0644 "$REPO/networkd/05-proxi-modems.network" /etc/systemd/network/
 systemctl daemon-reload
 udevadm control --reload
