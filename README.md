@@ -36,9 +36,11 @@ Todas las peticiones requieren la cabecera `X-API-KEY` y se hacen **desde el bac
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | `/status` | Por móvil: puerto, IP pública, `online`, `usb_present` |
+| GET | `/status` | Por móvil: puerto, IP pública, `online`, `usb_present`, `limit_kbps` |
 | GET | `/rotate/<id>` | Rota la IP del móvil `<id>` del inventario |
 | GET | `/usage` | Tráfico acumulado por móvil (`down_bytes`, `up_bytes`, `total_bytes`) |
+| GET | `/limit/<id>/<kbps>` | Limita la velocidad del móvil en ambos sentidos (64–1000000 kbps); se aplica en ≤30 s |
+| GET | `/limit/<id>/off` | Quita el límite |
 | GET | `/health` | Estado de la granja sin consultar IPs (rápido) |
 
 Respuesta de `/rotate/<id>`:
@@ -60,7 +62,14 @@ Respuesta de `/rotate/<id>`:
 
 Límites del gateway: 30 peticiones/min por IP (ráfaga de 10) y 6 rotaciones/min por móvil (ráfaga de 2).
 
-**Tráfico y límite mensual (350 GB por puerto):** `/usage` devuelve contadores **acumulados desde la instalación**, que no se reinician. Para el consumo del ciclo de un cliente, el backend guarda `total_bytes` al inicio de su ciclo y resta. Así cada cliente puede tener su propia fecha de facturación.
+**Tráfico y uso razonable (FUP, 350 GB/mes por puerto):** `/usage` devuelve contadores **acumulados desde la instalación**, que no se reinician. El backend PHP, por cada cliente:
+
+1. Al inicio de su ciclo: guarda `total_bytes` como punto de partida y llama a `/limit/<id>/off`.
+2. Periódicamente: consumo del ciclo = `total_bytes` actual − punto de partida.
+3. Al **80 % (280 GB)**: aviso por email/panel de que se acerca al umbral.
+4. Al **100 % (350 GB)**: aviso de entrada en FUP y `/limit/<id>/1500` (1,5 Mbps) hasta el siguiente ciclo.
+
+El límite se guarda en `/var/lib/proxi-granja/limites/<id>` y sobrevive a reinicios.
 
 **Change IP URL:** la sirve el backend PHP con un token por cliente (`https://soymas.pro/api/change/<token>`), que valida el token y llama a `/rotate/<id>` desde el servidor. La `X-API-KEY` nunca sale del backend.
 
@@ -143,6 +152,7 @@ Los Android dan al HP una IP aleatoria dentro de la misma subred de anclaje (`19
 | Entrada | `tailscale0:2000N` → DNAT → 10.200.N.2:3128 (tabla nft `proxi_granja`) |
 | Sincronización | `proxi-granja sync` cada 30 s (timer) y al conectar un móvil (udev): crea namespaces, mueve interfaces, genera configs, aplica NAT, cuenta tráfico |
 | Tráfico | `/var/lib/proxi-granja/trafico.db`: bytes acumulados por móvil (contador del veth `pg<N>`) |
+| FUP | `/var/lib/proxi-granja/limites/<id>` (kbps, lo escribe la API): `tc tbf` en `lan0` (bajada) y `pg<N>` (subida) |
 | networkd | `05-proxi-modems.network`: ignora las interfaces de anclaje USB (`rndis_host`, `cdc_ether`, `cdc_ncm`) |
 | API | `proxi-granja-api` (usuario `cesar`), `/opt/proxi-granja/api.py`, puerto 5000 |
 

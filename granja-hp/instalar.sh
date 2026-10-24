@@ -23,6 +23,8 @@ done
 id proxi3proxy >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin proxi3proxy
 
 install -d -m 0755 /etc/proxi-granja /opt/proxi-granja /var/lib/proxi-granja
+# Límites de velocidad (FUP): los escribe la API y los aplica proxi-granja sync.
+install -d -m 0755 -o "$API_USER" /var/lib/proxi-granja/limites
 install -d -m 0750 -g proxi3proxy /etc/proxi-granja/3proxy
 
 # Inventario y credenciales: solo se crean si no existen (son datos de producción).

@@ -6,7 +6,8 @@
 #   - enlace veth host<->namespace: pg<N> 10.200.N.1/30  <->  lan0 10.200.N.2/30;
 #   - DHCP dentro del namespace (proxi-modem-dhcp@<id>) y 3proxy en 10.200.N.2:3128 (proxi-modem-proxy@<id>);
 #   - DNAT del puerto público (llega por tailscale0) a 10.200.N.2:3128;
-#   - contabilidad de tráfico acumulado (bytes del veth pg<N>) en /var/lib/proxi-granja/trafico.db.
+#   - contabilidad de tráfico acumulado (bytes del veth pg<N>) en /var/lib/proxi-granja/trafico.db;
+#   - límite de velocidad (FUP) si existe /var/lib/proxi-granja/limites/<id> (kbps; lo escribe la API).
 # N = puerto_publico - 20000. Lo ejecuta proxi-granja-sync.timer cada 30 s y udev al conectar un móvil.
 #
 # Uso: proxi-granja [sync]
@@ -18,6 +19,7 @@ CREDENCIALES="$CONF_DIR/credentials"
 PROXY_CFG_DIR="$CONF_DIR/3proxy"
 STATE_DIR="${PROXI_GRANJA_STATE:-/run/proxi-granja}"
 DATA_DIR="${PROXI_GRANJA_DATA:-/var/lib/proxi-granja}"
+LIMITES_DIR="$DATA_DIR/limites"
 BASE_PUERTO=20000
 PUERTO_INTERNO=3128
 ENTRADA_IFACE="${PROXI_GRANJA_ENTRADA:-tailscale0}"
@@ -56,6 +58,34 @@ auth strong
 allow $usuario
 auto -n -a -p$PUERTO_INTERNO -i10.200.$n.2
 CFG
+}
+
+aplicar_limite() {
+    # Límite en ambos sentidos: la bajada del cliente sale del namespace por lan0,
+    # la subida sale del host por pg<N>. Imprime el límite vigente (kbps) o nada.
+    local id="$1" ns="$2" hv="$3" deseado="" aplicado
+    [[ -r "$LIMITES_DIR/$id" ]] && deseado="$(tr -dc '0-9' < "$LIMITES_DIR/$id")"
+    if [[ -n "$deseado" ]] && (( deseado < 64 || deseado > 1000000 )); then
+        log "$id" "límite inválido ($deseado kbps): ignorado"; deseado=""
+    fi
+    aplicado="$(cat "$STATE_DIR/$id.limit" 2>/dev/null)"
+    # Si el veth se recreó, el qdisc ya no existe aunque el estado diga lo contrario.
+    [[ -n "$aplicado" ]] && ! tc qdisc show dev "$hv" | grep -q tbf && aplicado=""
+
+    if [[ "$deseado" != "$aplicado" ]]; then
+        if [[ -n "$deseado" ]]; then
+            local burst=$(( deseado / 50 > 32 ? deseado / 50 : 32 ))
+            ip netns exec "$ns" tc qdisc replace dev lan0 root tbf rate "${deseado}kbit" burst "${burst}kbit" latency 400ms
+            tc qdisc replace dev "$hv" root tbf rate "${deseado}kbit" burst "${burst}kbit" latency 400ms
+            log "$id" "velocidad limitada a $deseado kbps"
+        else
+            ip netns exec "$ns" tc qdisc del dev lan0 root 2>/dev/null
+            tc qdisc del dev "$hv" root 2>/dev/null
+            log "$id" "límite de velocidad retirado"
+        fi
+        echo "$deseado" > "$STATE_DIR/$id.limit"
+    fi
+    echo "$deseado"
 }
 
 asegurar_servicio() {
@@ -98,6 +128,9 @@ configurar_modem() {
 
     echo "IFACE=$md" > "$STATE_DIR/$id.env"
 
+    local limite
+    limite="$(aplicar_limite "$id" "$ns" "$hv")"
+
     # Configuración de 3proxy (solo si el móvil tiene credenciales).
     local cred usuario clave
     cred="$(credencial "$id")"
@@ -125,9 +158,9 @@ configurar_modem() {
     local lan_ip gw
     lan_ip="$(ip -n "$ns" -4 -o addr show dev "$md" 2>/dev/null | awk '{split($4, a, "/"); print a[1]; exit}')"
     gw="$(ip -n "$ns" -4 route show default 2>/dev/null | awk '{print $3; exit}')"
-    printf '"%s":{"port":%d,"usb_present":%s,"lan_ip":"%s","gateway":"%s","proxy":%s}' \
+    printf '"%s":{"port":%d,"usb_present":%s,"lan_ip":"%s","gateway":"%s","proxy":%s,"limit_kbps":%s}' \
         "$id" "$puerto" "$([[ $presente == 1 ]] && echo true || echo false)" "$lan_ip" "$gw" \
-        "$([[ -n "$usuario" ]] && echo true || echo false)"
+        "$([[ -n "$usuario" ]] && echo true || echo false)" "${limite:-null}"
 }
 
 contabilizar_trafico() {
@@ -200,7 +233,7 @@ table ip proxi_granja {
 sync() {
     [[ $EUID -eq 0 ]] || { echo "Ejecutar como root." >&2; exit 1; }
     [[ -r "$INVENTARIO" ]] || { echo "No existe $INVENTARIO" >&2; exit 1; }
-    mkdir -p "$STATE_DIR" "$PROXY_CFG_DIR" "$DATA_DIR"
+    mkdir -p "$STATE_DIR" "$PROXY_CFG_DIR" "$DATA_DIR" "$LIMITES_DIR"
     sysctl -qw net.ipv4.ip_forward=1
 
     exec 9>"$STATE_DIR/sync.lock"
