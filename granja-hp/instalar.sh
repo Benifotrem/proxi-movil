@@ -27,6 +27,8 @@ install -d -m 0755 /etc/proxi-granja /opt/proxi-granja /var/lib/proxi-granja
 install -d -m 0755 -o "$API_USER" /var/lib/proxi-granja/limites
 # Credenciales de 3proxy generadas por la API (GET /credentials/<id>/new).
 install -d -m 0700 -o "$API_USER" /var/lib/proxi-granja/credenciales
+# Temporales de la API (fuera de los directorios vigilados por proxi-granja-sync.path).
+install -d -m 0700 -o "$API_USER" /var/lib/proxi-granja/.tmp
 install -d -m 0750 -g proxi3proxy /etc/proxi-granja/3proxy
 # Claves ADB adicionales (*.adb_key), p. ej. la del PC desde el que se autorizó un móvil con scrcpy.
 install -d -m 0700 -o "$API_USER" /etc/proxi-granja/adb_keys

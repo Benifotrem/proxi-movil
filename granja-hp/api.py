@@ -79,8 +79,10 @@ def credenciales():
 
 
 def escribir_atomico(ruta, contenido, modo=0o644):
+    # El temporal se crea fuera del directorio de destino: proxi-granja-sync.path vigila esos
+    # directorios y debe dispararse una sola vez, con el archivo ya completo (rename atómico).
     os.makedirs(os.path.dirname(ruta), exist_ok=True)
-    tmp = ruta + ".tmp"
+    tmp = os.path.join(DATA_DIR, ".tmp", f"{os.path.basename(ruta)}.{secrets.token_hex(4)}")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, modo)
     with os.fdopen(fd, "w") as f:
         f.write(contenido)
