@@ -25,6 +25,8 @@ id proxi3proxy >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr
 install -d -m 0755 /etc/proxi-granja /opt/proxi-granja /var/lib/proxi-granja
 # Límites de velocidad (FUP): los escribe la API y los aplica proxi-granja sync.
 install -d -m 0755 -o "$API_USER" /var/lib/proxi-granja/limites
+# Credenciales de 3proxy generadas por la API (GET /credentials/<id>/new).
+install -d -m 0700 -o "$API_USER" /var/lib/proxi-granja/credenciales
 install -d -m 0750 -g proxi3proxy /etc/proxi-granja/3proxy
 
 # Inventario y credenciales: solo se crean si no existen (son datos de producción).
@@ -55,7 +57,7 @@ fi
 install -d "$ROOTFS/etc/proxi-granja"
 
 # systemd, udev y networkd.
-install -m 0644 "$REPO"/systemd/proxi-*.service "$REPO"/systemd/proxi-*.timer /etc/systemd/system/
+install -m 0644 "$REPO"/systemd/proxi-*.service "$REPO"/systemd/proxi-*.timer "$REPO"/systemd/proxi-*.path /etc/systemd/system/
 sed -i "s/^User=cesar$/User=$API_USER/" /etc/systemd/system/proxi-granja-api.service
 install -m 0644 "$REPO/udev/90-proxi-granja.rules" /etc/udev/rules.d/
 install -m 0644 "$REPO/networkd/05-proxi-modems.network" /etc/systemd/network/

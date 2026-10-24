@@ -1,0 +1,10 @@
+[Unit]
+Description=Sincroniza la granja en cuanto la API cambia credenciales o limites
+
+[Path]
+PathChanged=/var/lib/proxi-granja/credenciales
+PathChanged=/var/lib/proxi-granja/limites
+Unit=proxi-granja-sync.service
+
+[Install]
+WantedBy=paths.target

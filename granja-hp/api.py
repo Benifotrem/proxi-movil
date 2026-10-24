@@ -5,6 +5,7 @@ Rutas:
   GET /rotate/<id>     rota la IP de un móvil (modo avión o datos móviles vía ADB)
   GET /usage           tráfico acumulado por móvil (bytes, desde la instalación)
   GET /limit/<id>/<kbps>  limita la velocidad del móvil (FUP); /limit/<id>/off la restablece
+  GET /credentials/<id>/new  genera usuario y contraseña nuevos para el móvil (las anteriores dejan de valer)
   GET /health          estado de la granja sin consultar IPs (rápido)
 
 El inventario y las credenciales se leen en cada petición: añadir un móvil no requiere reiniciar.
@@ -12,6 +13,7 @@ El inventario y las credenciales se leen en cada petición: añadir un móvil no
 import ipaddress
 import json
 import os
+import secrets
 import subprocess
 import threading
 import time
@@ -54,6 +56,7 @@ def inventario():
 
 
 def credenciales():
+    """Credenciales de 3proxy por móvil: las generadas por la API tienen prioridad sobre el archivo manual."""
     creds = {}
     try:
         with open(os.path.join(CONF_DIR, "credentials")) as f:
@@ -63,7 +66,25 @@ def credenciales():
                     creds[campos[0]] = (campos[1], campos[2])
     except FileNotFoundError:
         pass
+    directorio = os.path.join(DATA_DIR, "credenciales")
+    if os.path.isdir(directorio):
+        for mid in os.listdir(directorio):
+            if mid.endswith(".tmp"):
+                continue
+            with open(os.path.join(directorio, mid)) as f:
+                campos = f.read().split()
+            if len(campos) >= 2:
+                creds[mid] = (campos[0], campos[1])
     return creds
+
+
+def escribir_atomico(ruta, contenido, modo=0o644):
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    tmp = ruta + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, modo)
+    with os.fdopen(fd, "w") as f:
+        f.write(contenido)
+    os.replace(tmp, ruta)
 
 
 def estado_sync():
@@ -135,6 +156,8 @@ class GranjaHandler(BaseHTTPRequestHandler):
                 self.handle_rotate(parts[1].lower())
             elif len(parts) == 3 and parts[0] == "limit":
                 self.handle_limit(parts[1].lower(), parts[2].lower())
+            elif len(parts) == 3 and parts[0] == "credentials" and parts[2] == "new":
+                self.handle_new_credentials(parts[1].lower())
             elif path == "status":
                 self.handle_status()
             elif path == "usage":
@@ -142,7 +165,7 @@ class GranjaHandler(BaseHTTPRequestHandler):
             elif path == "health":
                 self.handle_health()
             else:
-                self.send_json(404, {"error": "Ruta no encontrada. Usa /status, /rotate/<id>, /limit/<id>/<kbps|off>, /usage o /health"})
+                self.send_json(404, {"error": "Ruta no encontrada. Usa /status, /rotate/<id>, /limit/<id>/<kbps|off>, /credentials/<id>/new, /usage o /health"})
         except Exception as exc:  # nunca dejar al cliente sin respuesta
             self.send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
 
@@ -237,14 +260,27 @@ class GranjaHandler(BaseHTTPRequestHandler):
             kbps = None
         elif valor.isdigit() and LIMITE_MIN_KBPS <= int(valor) <= LIMITE_MAX_KBPS:
             kbps = int(valor)
-            os.makedirs(directorio, exist_ok=True)
-            with open(ruta + ".tmp", "w") as f:
-                f.write(f"{kbps}\n")
-            os.replace(ruta + ".tmp", ruta)
+            escribir_atomico(ruta, f"{kbps}\n")
         else:
             self.send_json(400, {"error": f"Usa /limit/<id>/off o /limit/<id>/<kbps> ({LIMITE_MIN_KBPS}-{LIMITE_MAX_KBPS})"})
             return
         self.send_json(200, {"device": mid, "limit_kbps": kbps, "applies_within_s": SYNC_INTERVALO})
+
+    def handle_new_credentials(self, mid):
+        modems = inventario()
+        if mid not in modems:
+            self.send_json(404, {"error": f"Móvil '{mid}' no está en el inventario"})
+            return
+        usuario = "u" + secrets.token_hex(5)
+        clave = secrets.token_hex(16)
+        escribir_atomico(os.path.join(DATA_DIR, "credenciales", mid), f"{usuario} {clave}\n", 0o600)
+        self.send_json(200, {
+            "device": mid,
+            "port": modems[mid]["port"],
+            "user": usuario,
+            "password": clave,
+            "applies_within_s": SYNC_INTERVALO,
+        })
 
     def handle_usage(self):
         modems = inventario()

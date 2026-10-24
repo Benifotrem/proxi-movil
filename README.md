@@ -41,6 +41,7 @@ Todas las peticiones requieren la cabecera `X-API-KEY` y se hacen **desde el bac
 | GET | `/usage` | Tráfico acumulado por móvil (`down_bytes`, `up_bytes`, `total_bytes`) |
 | GET | `/limit/<id>/<kbps>` | Limita la velocidad del móvil en ambos sentidos (64–1000000 kbps); se aplica en ≤30 s |
 | GET | `/limit/<id>/off` | Quita el límite |
+| GET | `/credentials/<id>/new` | Genera usuario y contraseña nuevos para el móvil y los devuelve (una sola vez); las anteriores dejan de valer |
 | GET | `/health` | Estado de la granja sin consultar IPs (rápido) |
 
 Respuesta de `/rotate/<id>`:
@@ -70,6 +71,14 @@ Límites del gateway: 30 peticiones/min por IP (ráfaga de 10) y 6 rotaciones/mi
 4. Al **100 % (350 GB)**: aviso de entrada en FUP y `/limit/<id>/1500` (1,5 Mbps) hasta el siguiente ciclo.
 
 El límite se guarda en `/var/lib/proxi-granja/limites/<id>` y sobrevive a reinicios.
+
+**Credenciales de los clientes:** el backend PHP llama a `/credentials/<id>/new` al **asignar** un puerto a un cliente, al **dar de baja** a un cliente (para cortarle el acceso) y cuando el cliente pulsa **Regenerar contraseña**. Respuesta:
+
+```json
+{"device": "modem_2_4", "port": 20002, "user": "u5cf4a85c51", "password": "…32 hex…", "applies_within_s": 30}
+```
+
+La contraseña solo se devuelve en esa respuesta: el backend la guarda y la muestra en el panel del cliente. Se aplica en 1–2 s (vigilante `proxi-granja-sync.path`; como mucho 30 s) y reinicia solo el 3proxy de ese móvil.
 
 **Change IP URL:** la sirve el backend PHP con un token por cliente (`https://soymas.pro/api/change/<token>`), que valida el token y llama a `/rotate/<id>` desde el servidor. La `X-API-KEY` nunca sale del backend.
 
@@ -146,11 +155,11 @@ Los Android dan al HP una IP aleatoria dentro de la misma subred de anclaje (`19
 | Pieza | Detalle |
 |-------|---------|
 | Inventario | `/etc/proxi-granja/modems.conf`: `id usb adb_serial puerto rotacion` (una línea por móvil) |
-| Credenciales | `/etc/proxi-granja/credentials` (root:cesar 0640, fuera del repo): `id usuario contraseña` |
+| Credenciales | `/var/lib/proxi-granja/credenciales/<id>` (las genera la API, 0600) y, para altas manuales, `/etc/proxi-granja/credentials` (root:cesar 0640): `id usuario contraseña`. Prevalecen las de la API |
 | Namespace | `modem_<usb>`; dentro, la interfaz USB renombrada `mdm<N>` (DHCP con `dhcpcd`) y `lan0` 10.200.N.2/30 |
 | 3proxy | `proxi-modem-proxy@<id>`: `auto` (HTTP+SOCKS5) con `auth strong` en 10.200.N.2:3128, ejecutado con `NetworkNamespacePath=` desde el rootfs de la imagen `proxy-3proxy` |
 | Entrada | `tailscale0:2000N` → DNAT → 10.200.N.2:3128 (tabla nft `proxi_granja`) |
-| Sincronización | `proxi-granja sync` cada 30 s (timer) y al conectar un móvil (udev): crea namespaces, mueve interfaces, genera configs, aplica NAT, cuenta tráfico |
+| Sincronización | `proxi-granja sync` cada 30 s (timer), al conectar un móvil (udev) y al cambiar credenciales o límites (`proxi-granja-sync.path`): crea namespaces, mueve interfaces, genera configs, aplica NAT y límites, cuenta tráfico |
 | Tráfico | `/var/lib/proxi-granja/trafico.db`: bytes acumulados por móvil (contador del veth `pg<N>`) |
 | FUP | `/var/lib/proxi-granja/limites/<id>` (kbps, lo escribe la API): `tc tbf` en `lan0` (bajada) y `pg<N>` (subida) |
 | networkd | `05-proxi-modems.network`: ignora las interfaces de anclaje USB (`rndis_host`, `cdc_ether`, `cdc_ncm`) |
@@ -164,7 +173,7 @@ Los Android dan al HP una IP aleatoria dentro de la misma subred de anclaje (`19
 sudo ./granja-hp/instalar.sh          # copia archivos y prepara 3proxy; no activa nada
 sudo nano /etc/proxi-granja/modems.conf /etc/proxi-granja/credentials
 sudo networkctl reload
-sudo systemctl enable --now proxi-granja-sync.timer proxi-granja-api.service
+sudo systemctl enable --now proxi-granja-sync.timer proxi-granja-sync.path proxi-granja-api.service
 ```
 
 ### Añadir un móvil
