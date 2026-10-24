@@ -4,10 +4,12 @@ Rutas:
   GET /status          estado e IP pública de cada móvil del inventario
   GET /rotate/<id>     rota la IP de un móvil (modo avión o datos móviles vía ADB)
   GET /usage           tráfico acumulado por móvil (bytes, desde la instalación)
+  GET /limit/<id>/<kbps>  limita la velocidad del móvil (FUP); /limit/<id>/off la restablece
   GET /health          estado de la granja sin consultar IPs (rápido)
 
 El inventario y las credenciales se leen en cada petición: añadir un móvil no requiere reiniciar.
 """
+import ipaddress
 import json
 import os
 import subprocess
@@ -31,6 +33,8 @@ ROTATE_MIN_INTERVAL = 10    # segundos mínimos entre rotaciones del mismo móvi
 ROTATE_PAUSE = 3            # segundos con la red celular apagada
 NEW_IP_WAIT = 25            # segundos máximos esperando la IP nueva
 ESTADO_MAX_EDAD = 120       # si estado.json es más viejo, la sincronización no está corriendo
+LIMITE_MIN_KBPS, LIMITE_MAX_KBPS = 64, 1000000
+SYNC_INTERVALO = 30         # proxi-granja sync aplica los límites en como mucho este tiempo
 
 _locks = {}
 _last_rotation = {}
@@ -83,13 +87,28 @@ def ip_publica(mid, modem, creds):
             ["curl", "-s", "-m", str(IP_TIMEOUT), "-K", "-", IP_URL],
             input=config, capture_output=True, text=True, timeout=IP_TIMEOUT + 5
         )
-        return out.stdout.strip()
     except subprocess.TimeoutExpired:
+        return ""
+    ip = out.stdout.strip()
+    # Solo una IP: un portal cautivo o un error del servicio no deben pasar por "IP".
+    try:
+        ipaddress.ip_address(ip)
+        return ip
+    except ValueError:
         return ""
 
 
 class AdbError(Exception):
     pass
+
+
+def limite_kbps(mid):
+    try:
+        with open(os.path.join(DATA_DIR, "limites", mid)) as f:
+            valor = f.read().strip()
+        return int(valor) if valor.isdigit() else None
+    except FileNotFoundError:
+        return None
 
 
 def adb(serial, *args):
@@ -114,6 +133,8 @@ class GranjaHandler(BaseHTTPRequestHandler):
         try:
             if len(parts) == 2 and parts[0] == "rotate":
                 self.handle_rotate(parts[1].lower())
+            elif len(parts) == 3 and parts[0] == "limit":
+                self.handle_limit(parts[1].lower(), parts[2].lower())
             elif path == "status":
                 self.handle_status()
             elif path == "usage":
@@ -121,7 +142,7 @@ class GranjaHandler(BaseHTTPRequestHandler):
             elif path == "health":
                 self.handle_health()
             else:
-                self.send_json(404, {"error": "Ruta no encontrada. Usa /status, /rotate/<id>, /usage o /health"})
+                self.send_json(404, {"error": "Ruta no encontrada. Usa /status, /rotate/<id>, /limit/<id>/<kbps|off>, /usage o /health"})
         except Exception as exc:  # nunca dejar al cliente sin respuesta
             self.send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
 
@@ -137,6 +158,7 @@ class GranjaHandler(BaseHTTPRequestHandler):
                 "ip": ips[mid] or None,
                 "online": bool(ips[mid]),
                 "usb_present": sync.get(mid, {}).get("usb_present", False),
+                "limit_kbps": limite_kbps(mid),
             } for mid, m in modems.items()
         }})
 
@@ -200,6 +222,29 @@ class GranjaHandler(BaseHTTPRequestHandler):
             })
         finally:
             lock.release()
+
+    def handle_limit(self, mid, valor):
+        if mid not in inventario():
+            self.send_json(404, {"error": f"Móvil '{mid}' no está en el inventario"})
+            return
+        directorio = os.path.join(DATA_DIR, "limites")
+        ruta = os.path.join(directorio, mid)
+        if valor == "off":
+            try:
+                os.remove(ruta)
+            except FileNotFoundError:
+                pass
+            kbps = None
+        elif valor.isdigit() and LIMITE_MIN_KBPS <= int(valor) <= LIMITE_MAX_KBPS:
+            kbps = int(valor)
+            os.makedirs(directorio, exist_ok=True)
+            with open(ruta + ".tmp", "w") as f:
+                f.write(f"{kbps}\n")
+            os.replace(ruta + ".tmp", ruta)
+        else:
+            self.send_json(400, {"error": f"Usa /limit/<id>/off o /limit/<id>/<kbps> ({LIMITE_MIN_KBPS}-{LIMITE_MAX_KBPS})"})
+            return
+        self.send_json(200, {"device": mid, "limit_kbps": kbps, "applies_within_s": SYNC_INTERVALO})
 
     def handle_usage(self):
         modems = inventario()
