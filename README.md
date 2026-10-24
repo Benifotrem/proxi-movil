@@ -159,7 +159,7 @@ Los Android dan al HP una IP aleatoria dentro de la misma subred de anclaje (`19
 | Namespace | `modem_<usb>`; dentro, la interfaz USB renombrada `mdm<N>` (DHCP con `dhcpcd`) y `lan0` 10.200.N.2/30 |
 | 3proxy | `proxi-modem-proxy@<id>`: `auto` (HTTP+SOCKS5) con `auth strong` en 10.200.N.2:3128, ejecutado con `NetworkNamespacePath=` desde el rootfs de la imagen `proxy-3proxy` |
 | Entrada | `tailscale0:2000N` → DNAT → 10.200.N.2:3128 (tabla nft `proxi_granja`) |
-| Sincronización | `proxi-granja sync` cada 30 s (timer), al conectar un móvil (udev) y al cambiar credenciales o límites (`proxi-granja-sync.path`): crea namespaces, mueve interfaces, genera configs, aplica NAT y límites, cuenta tráfico |
+| Sincronización | `proxi-granja sync` cada 30 s (timer), al conectar un móvil (udev) y al cambiar credenciales o límites (`proxi-granja-sync.path`): crea namespaces, mueve interfaces, reactiva el anclaje USB por ADB, genera configs, aplica NAT y límites, cuenta tráfico. ADB se ejecuta como `ADB_USER` (`/etc/proxi-granja/granja.env`) |
 | Tráfico | `/var/lib/proxi-granja/trafico.db`: bytes acumulados por móvil (contador del veth `pg<N>`) |
 | FUP | `/var/lib/proxi-granja/limites/<id>` (kbps, lo escribe la API): `tc tbf` en `lan0` (bajada) y `pg<N>` (subida) |
 | networkd | `05-proxi-modems.network`: ignora las interfaces de anclaje USB (`rndis_host`, `cdc_ether`, `cdc_ncm`) |
@@ -178,7 +178,7 @@ sudo systemctl enable --now proxi-granja-sync.timer proxi-granja-sync.path proxi
 
 ### Requisitos de los móviles de producción
 
-- **Android 8 o superior**, con *Opciones de desarrollador → Configuración USB predeterminada → RNDIS (USB Ethernet)*. Así el anclaje USB se reactiva solo cada vez que el móvil se reconecta (corte de luz, reinicio del HP, cable). Comprobación: desenchufar y volver a enchufar; `adb -s <serial> shell getprop sys.usb.config` debe dar `rndis,adb` sin tocar el móvil.
+- **Android 8 o superior.** La granja reactiva sola el anclaje (`svc usb setFunctions rndis` por ADB, como mucho una vez por minuto) cuando un móvil del inventario está en ADB pero sin interfaz de red, por ejemplo tras reconectar el cable con el móvil bloqueado. Recomendado además: *Opciones de desarrollador → Configuración USB predeterminada → RNDIS (USB Ethernet)*. Así el anclaje USB se reactiva solo cada vez que el móvil se reconecta (corte de luz, reinicio del HP, cable). Comprobación: desenchufar y volver a enchufar; `adb -s <serial> shell getprop sys.usb.config` debe dar `rndis,adb` sin tocar el móvil.
 - En Android 7 o anterior (por ejemplo, el LG K9 de pruebas) el anclaje **vuelve a MTP al reconectar** y hay que reactivarlo a mano: `svc usb setFunction rndis` no arranca el anclaje completo en esas versiones.
 - Depuración USB activada y el HP autorizado de forma permanente. Si el aviso de autorización no puede aceptarse en el móvil (pantalla rota) pero sí se autorizó desde otro equipo (p. ej. el PC con scrcpy), copiar la clave privada de ese equipo (`%USERPROFILE%\.android\adbkey` en Windows) a `/etc/proxi-granja/adb_keys/<nombre>.adb_key` (cesar, 0600) y reiniciar el servidor ADB (`adb kill-server`): la granja la usa además de la suya (`ADB_VENDOR_KEYS`).
 - Si `/health` pasa a `degraded` (`modems_with_network` < `modems_total`), algún móvil ha perdido la red: el backend debe avisar al administrador.
