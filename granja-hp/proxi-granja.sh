@@ -7,7 +7,9 @@
 #   - DHCP dentro del namespace (proxi-modem-dhcp@<id>) y 3proxy en 10.200.N.2:3128 (proxi-modem-proxy@<id>);
 #   - DNAT del puerto público (llega por tailscale0) a 10.200.N.2:3128;
 #   - contabilidad de tráfico acumulado (bytes del veth pg<N>) en /var/lib/proxi-granja/trafico.db;
-#   - límite de velocidad (FUP) si existe /var/lib/proxi-granja/limites/<id> (kbps; lo escribe la API).
+#   - límite de velocidad (FUP) si existe /var/lib/proxi-granja/limites/<id> (kbps; lo escribe la API);
+#   - credenciales de 3proxy: /var/lib/proxi-granja/credenciales/<id> (las genera la API) o, si no hay,
+#     /etc/proxi-granja/credentials (alta manual).
 # N = puerto_publico - 20000. Lo ejecuta proxi-granja-sync.timer cada 30 s y udev al conectar un móvil.
 #
 # Uso: proxi-granja [sync]
@@ -20,6 +22,7 @@ PROXY_CFG_DIR="$CONF_DIR/3proxy"
 STATE_DIR="${PROXI_GRANJA_STATE:-/run/proxi-granja}"
 DATA_DIR="${PROXI_GRANJA_DATA:-/var/lib/proxi-granja}"
 LIMITES_DIR="$DATA_DIR/limites"
+CREDENCIALES_DIR="$DATA_DIR/credenciales"
 BASE_PUERTO=20000
 PUERTO_INTERNO=3128
 ENTRADA_IFACE="${PROXI_GRANJA_ENTRADA:-tailscale0}"
@@ -42,6 +45,11 @@ iface_por_usb() {
 }
 
 credencial() {
+    # Las generadas por la API ("usuario contraseña") tienen prioridad sobre el archivo manual.
+    if [[ -r "$CREDENCIALES_DIR/$1" ]]; then
+        awk 'NF >= 2 { print $1, $2; exit }' "$CREDENCIALES_DIR/$1"
+        return
+    fi
     [[ -r "$CREDENCIALES" ]] || return 1
     awk -v id="$1" '$1 == id { print $2, $3; exit }' "$CREDENCIALES"
 }
