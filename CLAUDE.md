@@ -9,5 +9,6 @@
 ## Flujo de cambios
 
 - Trabajar siempre en una rama aparte y abrir un pull request hacia `main`; nunca hacer push directo a `main`.
+- Claude fusiona él mismo los pull requests una vez probados, avisando al usuario de cada uno (qué cambia y cómo se probó) antes de fusionarlo.
 - Al fusionar en `main`, el VPS despliega solo en ≤2 min (`scripts/auto_deploy.sh`, timer `proxi-movil-deploy`).
 - Lo que está en `granja-hp/` no se despliega automáticamente: hay que aplicarlo a mano en el HP.
