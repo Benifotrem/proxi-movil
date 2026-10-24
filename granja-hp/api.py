@@ -88,9 +88,16 @@ def ip_publica(mid, modem, creds):
         return ""
 
 
+class AdbError(Exception):
+    pass
+
+
 def adb(serial, *args):
-    subprocess.run(["adb", "-s", serial, "shell", *args],
-                   capture_output=True, text=True, timeout=ADB_TIMEOUT, check=True)
+    out = subprocess.run(["adb", "-s", serial, "shell", *args],
+                         capture_output=True, text=True, timeout=ADB_TIMEOUT)
+    if out.returncode != 0:
+        lineas = (out.stderr or out.stdout).strip().splitlines()
+        raise AdbError(f"adb {' '.join(args)}: {lineas[0] if lineas else f'código {out.returncode}'}")
 
 
 def lock_de(mid):
@@ -154,8 +161,12 @@ class GranjaHandler(BaseHTTPRequestHandler):
             ip_anterior = ip_publica(mid, modem, creds)
             try:
                 if modem["rotation"] == "airplane":
-                    # Solo la radio celular: el anclaje USB debe seguir activo.
-                    adb(modem["serial"], "settings", "put", "global", "airplane_mode_radios", "cell")
+                    # Que el modo avión apague solo la radio celular. Algunas ROM (MIUI) no dejan
+                    # cambiar este ajuste por ADB; el anclaje USB no suele estar en la lista por defecto.
+                    try:
+                        adb(modem["serial"], "settings", "put", "global", "airplane_mode_radios", "cell")
+                    except AdbError:
+                        pass
                     adb(modem["serial"], "cmd", "connectivity", "airplane-mode", "enable")
                     time.sleep(ROTATE_PAUSE)
                     adb(modem["serial"], "cmd", "connectivity", "airplane-mode", "disable")
@@ -163,8 +174,9 @@ class GranjaHandler(BaseHTTPRequestHandler):
                     adb(modem["serial"], "svc", "data", "disable")
                     time.sleep(ROTATE_PAUSE)
                     adb(modem["serial"], "svc", "data", "enable")
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-                self.send_json(502, {"status": "adb_error", "device": mid, "error": str(exc)})
+            except (AdbError, subprocess.TimeoutExpired) as exc:
+                # 500 y 503 (no 502/504): Cloudflare sustituye esos por su propia página de error.
+                self.send_json(500, {"status": "adb_error", "device": mid, "error": str(exc)})
                 return
             finally:
                 _last_rotation[mid] = time.monotonic()
@@ -177,7 +189,7 @@ class GranjaHandler(BaseHTTPRequestHandler):
                     break
                 time.sleep(1.5)
 
-            self.send_json(200 if ip_nueva else 504, {
+            self.send_json(200 if ip_nueva else 503, {
                 "status": "success" if ip_nueva else "no_ip",
                 "device": mid,
                 "port": modem["port"],

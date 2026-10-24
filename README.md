@@ -55,8 +55,8 @@ Respuesta de `/rotate/<id>`:
 | 404 | Ruta o móvil inexistente |
 | 409 | Ya hay una rotación en curso de ese móvil |
 | 429 | Rotación antes de 10 s desde la anterior (`retry_after`), o límite del gateway |
-| 502 | La API del HP no responde, o fallo de ADB |
-| 504 | Tras rotar, el móvil no recuperó IP pública en 25 s |
+| 500 | Fallo de ADB al rotar (`adb_error`, con el mensaje del móvil) |
+| 503 | La API del HP no responde (`farm_unreachable`), o tras rotar el móvil no recuperó IP pública en 25 s (`no_ip`) |
 
 Límites del gateway: 30 peticiones/min por IP (ráfaga de 10) y 6 rotaciones/min por móvil (ráfaga de 2).
 
@@ -146,7 +146,7 @@ Los Android dan al HP una IP aleatoria dentro de la misma subred de anclaje (`19
 | networkd | `05-proxi-modems.network`: ignora las interfaces de anclaje USB (`rndis_host`, `cdc_ether`, `cdc_ncm`) |
 | API | `proxi-granja-api` (usuario `cesar`), `/opt/proxi-granja/api.py`, puerto 5000 |
 
-`N = puerto - 20000`. Rotación por `airplane` (modo avión solo para la radio celular, `airplane_mode_radios=cell`) o `data` (`svc data`, Android < 8).
+`N = puerto - 20000`. Rotación por `airplane` (modo avión; intenta `airplane_mode_radios=cell`, que MIUI no permite por ADB sin "Depuración USB (ajustes de seguridad)" — no es imprescindible porque el anclaje USB no está en la lista por defecto) o `data` (`svc data`, Android < 8).
 
 ### Instalación / actualización
 
