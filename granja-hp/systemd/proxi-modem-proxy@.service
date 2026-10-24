@@ -12,3 +12,6 @@ Group=proxi3proxy
 NoNewPrivileges=true
 Restart=always
 RestartSec=3
+# 3proxy tarda ~5 s en salir esperando a sus conexiones: al cambiar credenciales se corta
+# en 1 s (las del cliente anterior quedan revocadas y el nuevo entra enseguida).
+TimeoutStopSec=1
