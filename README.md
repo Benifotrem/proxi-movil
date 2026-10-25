@@ -63,6 +63,8 @@ Respuesta de `/rotate/<id>`:
 
 Límites del gateway: 30 peticiones/min por IP (ráfaga de 10) y 6 rotaciones/min por móvil (ráfaga de 2).
 
+**Lista blanca de IPs:** `API_ALLOWED_IPS` en `.env` (IPs o CIDR separadas por comas; vacía = cualquier IP). Solo esas IPs (comparadas con `CF-Connecting-IP`) pueden usar la API; el resto recibe 403 aunque tenga la API key. Incluir la IP de salida del backend (hosting compartido `server1886`: `147.93.37.28`, puede cambiar si Hostinger migra la cuenta) y la IP pública del VPS (para `healthcheck.sh`). El propio VPS/Docker siempre está permitido en local. Tras editarla: `docker compose up -d --force-recreate gateway`.
+
 **Tráfico y uso razonable (FUP, 350 GB/mes por puerto):** `/usage` devuelve contadores **acumulados desde la instalación**, que no se reinician. El backend PHP, por cada cliente:
 
 1. Al inicio de su ciclo: guarda `total_bytes` como punto de partida y llama a `/limit/<id>/off`.
