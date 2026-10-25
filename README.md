@@ -88,6 +88,20 @@ La contraseña solo se devuelve en esa respuesta: el backend la guarda y la mues
 
 **CORS:** solo para orígenes que cumplan `CORS_ORIGIN_REGEX` (por defecto `https://nodecellular.com`). El backend llama a la API desde el servidor, así que en la práctica no se usa; es una medida de respaldo.
 
+## Registro de sesiones (trazabilidad)
+
+El contenedor `stream` escribe una línea por sesión de proxy en `/var/log/proxi-movil/stream.log`:
+
+```text
+2026-11-03T14:05:12+00:00 cliente=198.51.100.7:51234 puerto=20001 estado=200 enviados=10422 recibidos=1830 duracion=12.345
+```
+
+- **Contenido de cada línea:** hora UTC de cierre, IP y puerto de origen del cliente, puerto público (es decir, qué móvil), bytes enviados y recibidos, y duración. No guarda contenido ni destinos.
+- **Correlación con el cliente:** el backend (proxi-backend, `audit:lookup`) sabe qué cliente tenía cada puerto y con qué IP pública salía el móvil en cada momento.
+- **Rotación:** diaria, con 365 días de conservación y compresión. Instalación, una vez, en el VPS:
+  `install -m 0644 /opt/proxi-movil/logrotate/proxi-movil /etc/logrotate.d/proxi-movil`.
+- **Búsqueda:** `zgrep -h "puerto=20001" /var/log/proxi-movil/stream.log*`.
+
 ## Acceso de los clientes al proxy
 
 ```text
