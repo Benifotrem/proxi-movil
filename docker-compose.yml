@@ -18,10 +18,12 @@ services:
       FARM_API_HOST: ${FARM_API_HOST:?Define FARM_API_HOST en .env}
       FARM_API_PORT: ${FARM_API_PORT:-5000}
       CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:-^https://(www\.)?soymas\.pro$$}
+      API_ALLOWED_IPS: ${API_ALLOWED_IPS:-}
       # Solo se sustituyen estas variables; las de nginx ($host, $uri...) quedan intactas.
       NGINX_ENVSUBST_FILTER: "^(API_KEY|FARM_API_HOST|FARM_API_PORT|CORS_ORIGIN_REGEX)$"
     volumes:
       - ./nginx/default.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/allowlist.sh:/docker-entrypoint.d/40-proxi-allowlist.sh:ro
     networks:
       - proxi_movil_net
     security_opt:
