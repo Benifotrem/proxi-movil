@@ -82,14 +82,16 @@ El límite se guarda en `/var/lib/proxi-granja/limites/<id>` y sobrevive a reini
 
 La contraseña solo se devuelve en esa respuesta: el backend la guarda y la muestra en el panel del cliente. Se aplica en 1–2 s (vigilante `proxi-granja-sync.path`; como mucho 30 s) y reinicia solo el 3proxy de ese móvil.
 
-**Change IP URL:** la sirve el backend PHP con un token por cliente (`https://soymas.pro/api/change/<token>`), que valida el token y llama a `/rotate/<id>` desde el servidor. La `X-API-KEY` nunca sale del backend.
+**Change IP URL:** la sirve el backend ([proxi-backend](https://github.com/Benifotrem/proxi-backend)) con un token por cliente (`https://nodecellular.com/r/<token>`), que valida el token y llama a `/rotate/<id>` desde el servidor. La `X-API-KEY` nunca sale del backend.
 
-**CORS:** solo para orígenes que cumplan `CORS_ORIGIN_REGEX` (por defecto `https://soymas.pro`); es una medida de respaldo.
+**Nombre de la API:** `proxy.soymas.pro` (túnel de Cloudflare). Solo lo usa el backend, de servidor a servidor; los clientes no lo ven. El DNS de nodecellular.com está en Hostinger, por eso el túnel sigue en soymas.pro.
+
+**CORS:** solo para orígenes que cumplan `CORS_ORIGIN_REGEX` (por defecto `https://nodecellular.com`). El backend llama a la API desde el servidor, así que en la práctica no se usa; es una medida de respaldo.
 
 ## Acceso de los clientes al proxy
 
 ```text
-host: <IP pública del VPS>   puerto: 2000N   usuario/contraseña: los de su móvil
+host: gw.nodecellular.com (A -> IP del VPS, sin Cloudflare)   puerto: 2000N   usuario/contraseña: los de su móvil
 ```
 
 HTTP y SOCKS5 en el mismo puerto (3proxy `auto`). Ejemplo: `curl -x http://usuario:clave@VPS:20001 https://api.ipify.org`.
