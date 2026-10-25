@@ -53,6 +53,8 @@ services:
       NGINX_ENVSUBST_FILTER: "^(FARM_API_HOST|PROXY_PORTS)$"
     volumes:
       - ./nginx/stream.conf:/etc/nginx/templates/nginx.conf.template:ro
+      # Registro de sesiones de proxy (trazabilidad). Rotación: logrotate/proxi-movil.
+      - /var/log/proxi-movil:/var/log/proxi-movil
     security_opt:
       - no-new-privileges:true
     healthcheck:

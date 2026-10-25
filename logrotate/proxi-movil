@@ -1,0 +1,16 @@
+# Rotación del registro de sesiones de proxy: diario, 365 días, comprimido.
+# Instalar en el VPS: install -m 0644 /opt/proxi-movil/logrotate/proxi-movil /etc/logrotate.d/proxi-movil
+/var/log/proxi-movil/stream.log {
+    daily
+    rotate 365
+    dateext
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root adm
+    sharedscripts
+    postrotate
+        docker exec proxi_movil_stream nginx -s reopen >/dev/null 2>&1 || true
+    endscript
+}
