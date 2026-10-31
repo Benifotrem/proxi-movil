@@ -1,0 +1,20 @@
+[Unit]
+Description=Captura de muestras de precios (nodecellular.com) por los moviles de la granja
+After=network-online.target proxi-granja-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cesar
+# CAPTURA_API_URL, CAPTURA_TOKEN, CAPTURA_MODEMS (ver /opt/proxi-granja/captura.py).
+EnvironmentFile=/etc/proxi-granja/captura.env
+ExecStart=/usr/bin/python3 /opt/proxi-granja/captura.py
+Restart=always
+RestartSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
