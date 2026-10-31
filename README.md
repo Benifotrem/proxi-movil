@@ -218,6 +218,18 @@ sudo nft list table ip proxi_granja                   # DNAT
 journalctl -u proxi-granja-sync -n 50                 # sincronización
 ```
 
+
+## Captura de muestras (`granja-hp/captura.py`)
+
+Trabajador del HP que genera las muestras gratuitas de nodecellular.com sin intervención humana:
+
+- **Ciclo:** pide tareas al backend (`POST https://nodecellular.com/worker/tasks/claim`, token `CAPTURA_TOKEN` = `CAPTURE_WORKER_TOKEN` del hosting), visita cada URL por un móvil de `CAPTURA_MODEMS` (su 3proxy interno, en rotación) y devuelve precio, moneda, disponibilidad y título.
+- **Extracción:** usa lo que la página publica: JSON-LD schema.org (`Product`/`Offer`, `@graph`, varias ofertas → la más barata), metadatos `product:`/`og:` y microdatos `itemprop`. Sin precio fiable, la tarea vuelve como fallida (nunca se inventa).
+- **SSRF:** solo http(s) públicas en 80/443, comprobando **todas** las IPs del DNS y cada redirección. Nunca la LAN, la granja (10.200.x) ni Tailscale (100.64/10).
+- **Comportamiento:** ritmo bajo (`CAPTURA_DOMAIN_DELAY`, 8 s por dominio, de una en una), respeta `robots.txt`, no resuelve CAPTCHAs ni salta sistemas antibot. Un bloqueo (401/403/429/503 o desafío) vuelve como `blocked_*` y la muestra pasa a revisión.
+- **Pruebas:** `python3 -m unittest discover -s granja-hp/tests` (sin red).
+- **Activar** (tras `instalar.sh`): poner `CAPTURA_TOKEN` en `/etc/proxi-granja/captura.env` y `sudo systemctl enable --now proxi-captura`. Registro: `journalctl -u proxi-captura -f`.
+
 ## Notas de seguridad
 
 - `.env` (VPS) y `/etc/proxi-granja/credentials` (HP) contienen secretos: nunca en el repositorio.
