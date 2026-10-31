@@ -35,6 +35,22 @@ ADB_USER=""
 
 log() { echo "[$1] ${*:2}" >&2; }
 
+USB_SYS="${PROXI_GRANJA_USB_SYS:-/sys/bus/usb/devices}"
+
+# Ruta USB actual (p. ej. 1-1.2.2) del dispositivo con ese número de serie. Así un móvil se
+# reconoce aunque el hub cambie de puerto o de controlador (antes: 4-1.2.2 → ahora 1-1.2.2).
+usb_por_serial() {
+    local serial="$1" d
+    [[ -n "$serial" && "$serial" != "-" ]] || return 0
+    for d in "$USB_SYS"/*; do
+        [[ -r "$d/serial" ]] || continue
+        if [[ "$(cat "$d/serial" 2>/dev/null)" == "$serial" ]]; then
+            basename "$d"
+            return
+        fi
+    done
+}
+
 iface_por_usb() {
     local usb="$1" n
     # "if:<nombre>" fuerza una interfaz concreta (útil para pruebas).
@@ -147,9 +163,15 @@ configurar_modem() {
     ip -n "$ns" addr replace "10.200.$n.2/30" dev lan0
     ip -n "$ns" link set lan0 up
 
-    # Interfaz USB del móvil: si aparece en el host, se mueve al namespace.
-    local iface
-    iface="$(iface_por_usb "$usb")"
+    # Interfaz USB del móvil: si aparece en el host, se mueve al namespace. Se busca por número de
+    # serie (vale en cualquier puerto); la ruta de modems.conf queda como respaldo.
+    local iface ruta
+    ruta="$(usb_por_serial "$serial")"
+    if [[ -n "$ruta" && "$ruta" != "$usb" && "$usb" != if:* ]]; then
+        log "$id" "localizado por número de serie en USB $ruta (modems.conf dice $usb)"
+    fi
+    [[ "$usb" == if:* ]] && ruta=""
+    iface="$(iface_por_usb "${ruta:-$usb}")"
     if [[ -n "$iface" ]]; then
         ip link set dev "$iface" netns "$ns" \
             && ip -n "$ns" link set dev "$iface" name "$md" \
