@@ -227,6 +227,8 @@ Trabajador del HP que genera las muestras gratuitas de nodecellular.com sin inte
 - **Extracción:** usa lo que la página publica: JSON-LD schema.org (`Product`/`Offer`, `@graph`, varias ofertas → la más barata), metadatos `product:`/`og:` y microdatos `itemprop`. Sin precio fiable, la tarea vuelve como fallida (nunca se inventa).
 - **SSRF:** solo http(s) públicas en 80/443, comprobando **todas** las IPs del DNS y cada redirección. Nunca la LAN, la granja (10.200.x) ni Tailscale (100.64/10).
 - **Comportamiento:** ritmo bajo (`CAPTURA_DOMAIN_DELAY`, 8 s por dominio, de una en una), respeta `robots.txt`, no resuelve CAPTCHAs ni salta sistemas antibot. Un bloqueo (401/403/429/503 o desafío) vuelve como `blocked_*` y la muestra pasa a revisión.
+- **Errores de red de la granja** (móvil sin datos, 502 del túnel, tiempo agotado): se prueba por el otro móvil; si fallan todos, la tarea no se informa y se reintenta al caducar la reserva (máx. 3 intentos).
+- **Webs con control antibot** (p. ej. una página «Client Challenge» que exige JavaScript) vuelven como `blocked_challenge`: no se capturan automáticamente.
 - **Pruebas:** `python3 -m unittest discover -s granja-hp/tests` (sin red).
 - **Activar** (tras `instalar.sh`): poner `CAPTURA_TOKEN` en `/etc/proxi-granja/captura.env` y `sudo systemctl enable --now proxi-captura`. Registro: `journalctl -u proxi-captura -f`.
 

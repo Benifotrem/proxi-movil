@@ -256,6 +256,21 @@ def _resultado(precio, moneda, disp, titulo, metodo):
 
 
 BLOQUEO = re.compile(r"captcha|are you a robot|verify you are human|access denied|cf-chl|challenge-platform|px-captcha|distil", re.I)
+TITULO_DESAFIO = re.compile(r"<title[^>]*>\s*(client challenge|just a moment|attention required|access denied|security check|"
+                            r"un momento|verificando|comprobando|please wait|robot check|pardon our interruption)", re.I)
+
+
+def es_desafio(html):
+    """Página de control antibot en lugar del producto. No se intenta superar: se informa como bloqueo."""
+    cabeza = html[:20000]
+    if "ld+json" in cabeza and "product" in cabeza.lower():
+        return False
+    return bool(TITULO_DESAFIO.search(cabeza) or BLOQUEO.search(cabeza)
+                or (len(html) < 15000 and re.search(r"enable javascript|habilita javascript|challenge", cabeza, re.I)))
+
+
+class ErrorRed(Exception):
+    """Fallo de la salida (móvil sin datos, proxy, túnel): no es culpa de la URL; se reintenta."""
 
 
 # --------------------------------------------------------------------------- red (por un móvil de la granja)
@@ -285,7 +300,11 @@ class Salida:
                 n = inv[mid]["port"] - BASE_PUERTO
                 usuario, clave = creds[mid]
                 return f"http://10.200.{n}.2:{PUERTO_INTERNO}", f"{usuario}:{clave}"
-        raise RuntimeError("ningún móvil de CAPTURA_MODEMS disponible")
+        raise ErrorRed("ningún móvil de CAPTURA_MODEMS disponible")
+
+
+# Códigos de curl de red/proxy/túnel (5 proxy, 7 conexión, 28 tiempo, 35 TLS, 52/55/56 envío/recepción, 97 proxy).
+CURL_RED = {5, 7, 28, 35, 52, 55, 56, 97}
 
 
 def descargar(url, salida, cabeceras_extra=()):
@@ -301,6 +320,8 @@ def descargar(url, salida, cabeceras_extra=()):
         for h in cabeceras_extra:
             cmd[1:1] = ["-H", h]
         out = subprocess.run(cmd + [url], input=config, capture_output=True, text=True, timeout=FETCH_TIMEOUT + 10)
+        if out.returncode in CURL_RED:
+            raise ErrorRed(f"curl {out.returncode}: {out.stderr.strip()[:120]}")
         if out.returncode not in (0, 63):  # 63: supera max-filesize
             raise RuntimeError(f"curl {out.returncode}: {out.stderr.strip()[:120]}")
         codigo, location, ctype = (out.stdout.split("\n") + ["", "", ""])[:3]
@@ -337,31 +358,40 @@ def _esperar_turno(dominio):
     _ultimo[dominio] = time.monotonic()
 
 
+def _visitar(url, salida, robots, resolver):
+    """Una visita por una salida concreta (sigue redirecciones revisándolas). Puede lanzar ErrorRed."""
+    actual = url
+    for _ in range(MAX_REDIRECTS + 1):
+        if not url_permitida(actual, resolver):
+            return {"status": "failed", "error": "url_not_public"}
+        if not robots.permitido(actual, salida):
+            return {"status": "failed", "error": "robots_disallow"}
+        _esperar_turno(urlparse(actual).hostname)
+        codigo, html, location, _ = descargar(actual, salida)
+        if codigo in (301, 302, 303, 307, 308) and location:
+            actual = urljoin(actual, location)
+            continue
+        if codigo in (401, 403, 429, 503) or (codigo == 200 and es_desafio(html)):
+            return {"status": "failed", "error": "blocked_challenge" if codigo == 200 else f"blocked_{codigo}"}
+        if codigo in (404, 410):
+            return {"status": "failed", "error": f"not_found_{codigo}"}
+        if codigo != 200:
+            return {"status": "failed", "error": f"http_{codigo}"}
+        return extraer(html)
+    return {"status": "failed", "error": "too_many_redirects"}
+
+
 def capturar(url, salidas, robots, resolver=socket.getaddrinfo):
-    """Resultado para el backend. Nunca lanza: los errores vuelven como status 'failed'."""
-    try:
-        salida = salidas.siguiente()
-        actual = url
-        for _ in range(MAX_REDIRECTS + 1):
-            if not url_permitida(actual, resolver):
-                return {"status": "failed", "error": "url_not_public"}
-            if not robots.permitido(actual, salida):
-                return {"status": "failed", "error": "robots_disallow"}
-            _esperar_turno(urlparse(actual).hostname)
-            codigo, html, location, _ = descargar(actual, salida)
-            if codigo in (301, 302, 303, 307, 308) and location:
-                actual = urljoin(actual, location)
-                continue
-            if codigo in (401, 403, 429, 503) or (codigo == 200 and BLOQUEO.search(html[:20000]) and "ld+json" not in html):
-                return {"status": "failed", "error": f"blocked_{codigo}"}
-            if codigo == 404 or codigo == 410:
-                return {"status": "failed", "error": f"not_found_{codigo}"}
-            if codigo != 200:
-                return {"status": "failed", "error": f"http_{codigo}"}
-            return extraer(html)
-        return {"status": "failed", "error": "too_many_redirects"}
-    except Exception as exc:  # noqa: BLE001 - se informa al backend
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:300]}
+    """Resultado para el backend, o None si fallaron todas las salidas de la granja (error de red):
+    en ese caso no se informa nada y la tarea se reintenta cuando caduque la reserva."""
+    for _ in range(max(1, len(getattr(salidas, "modems", [None])))):
+        try:
+            return _visitar(url, salidas.siguiente(), robots, resolver)
+        except ErrorRed as exc:
+            print(f"captura: salida con error de red ({exc}); probando otro móvil", flush=True)
+        except Exception as exc:  # noqa: BLE001 - se informa al backend
+            return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:300]}
+    return None
 
 
 # --------------------------------------------------------------------------- API del backend
@@ -392,6 +422,9 @@ def main():
             continue
         for t in tareas:
             r = capturar(t["url"], salidas, robots)
+            if r is None:
+                print(f"captura: tarea {t['id']} sin salida disponible; se reintentará más tarde", flush=True)
+                continue
             print(f"captura: tarea {t['id']} {urlparse(t['url']).hostname} → {r['status']} {r.get('price') or r.get('error') or ''}", flush=True)
             try:
                 api(f"/tasks/{t['id']}/result", r)

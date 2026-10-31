@@ -84,8 +84,14 @@ class Flujo(unittest.TestCase):
         captura.descargar = self.orig
 
     class Salidas:
+        modems = ["m1", "m2"]
+
+        def __init__(self):
+            self.i = 0
+
         def siguiente(self):
-            return ("http://10.200.3.2:3128", "u:p")
+            self.i += 1
+            return (f"http://10.200.{self.i}.2:3128", "u:p")
 
     class RobotsSi:
         def permitido(self, url, salida):
@@ -96,9 +102,15 @@ class Flujo(unittest.TestCase):
 
         def falso(u, salida, cabeceras_extra=()):
             llamadas.append(u)
-            return respuestas[u]
+            r = respuestas[u]
+            if isinstance(r, dict):  # respuesta por salida
+                r = r[salida[0]]
+            if isinstance(r, Exception):
+                raise r
+            return r
         captura.descargar = falso
         res = resolver({"tienda.es": ["151.101.1.69"], "interna.es": ["192.168.1.10"]})
+        self.llamadas = llamadas
         return captura.capturar(url, self.Salidas(), self.RobotsSi(), res), llamadas
 
     def test_redireccion_a_red_interna_bloqueada(self):
@@ -110,7 +122,18 @@ class Flujo(unittest.TestCase):
         r, _ = self.run_con({"https://tienda.es/p": (403, "Access denied", "", "")})
         self.assertEqual(r["error"], "blocked_403")
         r, _ = self.run_con({"https://tienda.es/p": (200, "<html>Please complete the captcha</html>", "", "")})
-        self.assertEqual(r["error"], "blocked_200")
+        self.assertEqual(r["error"], "blocked_challenge")
+        desafio = "<html><head><title>Client Challenge</title></head><body><script src='/x.js'></script></body></html>"
+        r, _ = self.run_con({"https://tienda.es/p": (200, desafio, "", "")})
+        self.assertEqual(r["error"], "blocked_challenge")
+
+    def test_error_de_red_prueba_otro_movil_y_si_no_se_reintenta(self):
+        html = '<meta property="product:price:amount" content="9.90">'
+        caida = captura.ErrorRed("curl 56: CONNECT tunnel failed, response 502")
+        r, llamadas = self.run_con({"https://tienda.es/p": {"http://10.200.1.2:3128": caida, "http://10.200.2.2:3128": (200, html, "", "")}})
+        self.assertEqual((r["status"], r["price"], len(llamadas)), ("ok", 9.9, 2))
+        r, _ = self.run_con({"https://tienda.es/p": caida})
+        self.assertIsNone(r)  # ninguna salida: no se informa; la reserva caduca y se reintenta
 
     def test_robots_y_ok(self):
         r, llamadas = self.run_con({}, url="https://tienda.es/privado")
