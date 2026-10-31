@@ -172,7 +172,7 @@ Los Android dan al HP una IP aleatoria dentro de la misma subred de anclaje (`19
 
 | Pieza | Detalle |
 |-------|---------|
-| Inventario | `/etc/proxi-granja/modems.conf`: `id usb adb_serial puerto rotacion` (una línea por móvil) |
+| Inventario | `/etc/proxi-granja/modems.conf`: `id usb adb_serial puerto rotacion` (una línea por móvil). El móvil se localiza por su **número de serie** en cualquier puerto USB; la ruta `usb` solo es respaldo |
 | Credenciales | `/var/lib/proxi-granja/credenciales/<id>` (las genera la API, 0600) y, para altas manuales, `/etc/proxi-granja/credentials` (root:cesar 0640): `id usuario contraseña`. Prevalecen las de la API |
 | Namespace | `modem_<usb>`; dentro, la interfaz USB renombrada `mdm<N>` (DHCP con `dhcpcd`) y `lan0` 10.200.N.2/30 |
 | 3proxy | `proxi-modem-proxy@<id>`: `auto` (HTTP+SOCKS5) con `auth strong` en 10.200.N.2:3128, ejecutado con `NetworkNamespacePath=` desde el rootfs de la imagen `proxy-3proxy` |
