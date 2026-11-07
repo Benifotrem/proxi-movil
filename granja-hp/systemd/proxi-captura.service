@@ -14,6 +14,8 @@ RestartSec=30
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+# Cerrojos por móvil compartidos con la API (no rotar con visitas en vuelo).
+ReadWritePaths=/var/lib/proxi-granja/locks
 PrivateTmp=true
 
 [Install]

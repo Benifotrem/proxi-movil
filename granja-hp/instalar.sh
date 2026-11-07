@@ -29,6 +29,8 @@ install -d -m 0755 -o "$API_USER" /var/lib/proxi-granja/limites
 install -d -m 0700 -o "$API_USER" /var/lib/proxi-granja/credenciales
 # Temporales de la API (fuera de los directorios vigilados por proxi-granja-sync.path).
 install -d -m 0700 -o "$API_USER" /var/lib/proxi-granja/.tmp
+# Cerrojos por móvil (rotación frente a peticiones en vuelo): API, captura y sondas.
+install -d -m 0700 -o "$API_USER" /var/lib/proxi-granja/locks
 install -d -m 0750 -g proxi3proxy /etc/proxi-granja/3proxy
 # Claves ADB adicionales (*.adb_key), p. ej. la del PC desde el que se autorizó un móvil con scrcpy.
 install -d -m 0700 -o "$API_USER" /etc/proxi-granja/adb_keys
@@ -55,6 +57,9 @@ fi
 install -m 0755 "$REPO/proxi-granja.sh" /usr/local/sbin/proxi-granja
 install -m 0644 "$REPO/api.py" /opt/proxi-granja/api.py
 install -m 0644 "$REPO/captura.py" /opt/proxi-granja/captura.py
+install -m 0644 "$REPO/http_worker.py" /opt/proxi-granja/http_worker.py
+install -m 0644 "$REPO/drivers.py" /opt/proxi-granja/drivers.py
+install -m 0644 "$REPO/granja_lock.py" /opt/proxi-granja/granja_lock.py
 # Trabajador de captura de muestras: configuración solo si no existe (lleva el token).
 if [[ ! -f /etc/proxi-granja/captura.env ]]; then
     install -m 0600 "$REPO/etc/captura.env.example" /etc/proxi-granja/captura.env
@@ -74,7 +79,7 @@ install -d "$ROOTFS/etc/proxi-granja"
 
 # systemd, udev y networkd.
 install -m 0644 "$REPO"/systemd/proxi-*.service "$REPO"/systemd/proxi-*.timer "$REPO"/systemd/proxi-*.path /etc/systemd/system/
-sed -i "s/^User=cesar$/User=$API_USER/" /etc/systemd/system/proxi-granja-api.service /etc/systemd/system/proxi-captura.service
+sed -i "s/^User=cesar$/User=$API_USER/" /etc/systemd/system/proxi-granja-api.service /etc/systemd/system/proxi-captura.service /etc/systemd/system/proxi-sondas.service
 install -m 0644 "$REPO/udev/90-proxi-granja.rules" /etc/udev/rules.d/
 install -m 0644 "$REPO/profile.d/proxi-granja-adb.sh" /etc/profile.d/
 install -m 0644 "$REPO/networkd/05-proxi-modems.network" /etc/systemd/network/

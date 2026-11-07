@@ -1,0 +1,22 @@
+[Unit]
+Description=Sondas HTTP de la plataforma (Sentinel ISP de nodecellular.com) por los moviles de la granja
+After=network-online.target proxi-granja-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cesar
+# Mismo backend y token que proxi-captura (CAPTURA_API_URL, CAPTURA_TOKEN).
+EnvironmentFile=/etc/proxi-granja/captura.env
+ExecStart=/usr/bin/python3 /opt/proxi-granja/http_worker.py
+Restart=always
+RestartSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# Cerrojos por móvil compartidos con la API (no rotar con sondas en vuelo).
+ReadWritePaths=/var/lib/proxi-granja/locks
+
+[Install]
+WantedBy=multi-user.target

@@ -225,8 +225,8 @@ configurar_modem() {
 contabilizar_trafico() {
     # trafico.db: "id total_bajada total_subida ultimo_rx ultimo_tx" (bytes, acumulado desde la instalación).
     # Bajada = lo que sale del namespace hacia el cliente (rx de pg<N> en el host); subida = al revés.
-    local db="$DATA_DIR/trafico.db" actual="" id usb serial puerto rot n rx tx
-    while read -r id usb serial puerto rot; do
+    local db="$DATA_DIR/trafico.db" actual="" id usb serial puerto rot _extra n rx tx
+    while read -r id usb serial puerto rot _extra; do
         n=$((puerto - BASE_PUERTO))
         [[ -r "/sys/class/net/pg$n/statistics/rx_bytes" ]] || continue
         rx="$(cat "/sys/class/net/pg$n/statistics/rx_bytes")"
@@ -263,7 +263,7 @@ delete table ip proxi_granja
 table ip proxi_granja {
   chain pre {
     type nat hook prerouting priority dstnat; policy accept;"
-    while read -r id usb serial puerto rot; do
+    while read -r id usb serial puerto rot _extra; do
         n=$((puerto - BASE_PUERTO))
         nuevo+="
     iifname \"$ENTRADA_IFACE\" tcp dport $puerto dnat to 10.200.$n.2:$PUERTO_INTERNO"
@@ -298,8 +298,8 @@ sync() {
     exec 9>"$STATE_DIR/sync.lock"
     flock 9
 
-    local estado="{" sep="" frag id usb serial puerto rot
-    while read -r id usb serial puerto rot; do
+    local estado="{" sep="" frag id usb serial puerto rot _extra
+    while read -r id usb serial puerto rot _extra; do
         [[ "$id" =~ ^[a-z0-9_]{1,15}$ ]] || { log "$id" "id inválido (a-z0-9_, máx. 15)"; continue; }
         frag="$(configurar_modem "$id" "$usb" "$puerto" "$serial")"
         [[ -n "$frag" ]] && { estado+="$sep$frag"; sep=","; }
