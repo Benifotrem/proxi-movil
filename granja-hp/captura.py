@@ -18,6 +18,7 @@ Configuración (/etc/proxi-granja/captura.env):
   CAPTURA_TOKEN=<CAPTURE_WORKER_TOKEN del backend>
   CAPTURA_MODEMS=modem_2_3,modem_2_4      móviles por los que salen las visitas (rotación)
 """
+import contextlib
 import ipaddress
 import json
 import os
@@ -34,6 +35,7 @@ from urllib import robotparser
 from urllib.parse import urljoin, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import granja_lock  # noqa: E402
 
 API_URL = os.environ.get("CAPTURA_API_URL", "https://nodecellular.com/worker").rstrip("/")
 TOKEN = os.environ.get("CAPTURA_TOKEN", "")
@@ -255,7 +257,8 @@ def _resultado(precio, moneda, disp, titulo, metodo):
             "availability": disp, "title": _limpio(titulo), "method": metodo}
 
 
-BLOQUEO = re.compile(r"captcha|are you a robot|verify you are human|access denied|cf-chl|challenge-platform|px-captcha|distil", re.I)
+BLOQUEO = re.compile(r"captcha|are you a robot|verify you are human|access denied|cf-chl|challenge-platform|px-captcha|distil|"
+                     r"puede[s]? (que )?(ser|seas) un robot|eres un robot|no (eres|soy) un robot|comportamiento inusual", re.I)
 TITULO_DESAFIO = re.compile(r"<title[^>]*>\s*(client challenge|just a moment|attention required|access denied|security check|"
                             r"un momento|verificando|comprobando|please wait|robot check|pardon our interruption)", re.I)
 
@@ -290,13 +293,15 @@ class Salida:
 
     def __init__(self, modems):
         self.modems, self.i = modems, 0
+        self.ultimo = None  # móvil de la última salida (para su cerrojo compartido)
 
     def siguiente(self):
         inv, creds = _inventario(), _credenciales()
         for _ in range(len(self.modems)):
             mid = self.modems[self.i % len(self.modems)]
             self.i += 1
-            if mid in inv and mid in creds:
+            if mid in inv and mid in creds and not granja_lock.rotando(mid):
+                self.ultimo = mid
                 n = inv[mid]["port"] - BASE_PUERTO
                 usuario, clave = creds[mid]
                 return f"http://10.200.{n}.2:{PUERTO_INTERNO}", f"{usuario}:{clave}"
@@ -386,7 +391,13 @@ def capturar(url, salidas, robots, resolver=socket.getaddrinfo):
     en ese caso no se informa nada y la tarea se reintenta cuando caduque la reserva."""
     for _ in range(max(1, len(getattr(salidas, "modems", [None])))):
         try:
-            return _visitar(url, salidas.siguiente(), robots, resolver)
+            salida = salidas.siguiente()
+            mid = getattr(salidas, "ultimo", None)
+            # Mientras dura la visita, el móvil no rota (cerrojo compartido con la API).
+            with granja_lock.en_uso(mid) if mid else contextlib.nullcontext():
+                return _visitar(url, salida, robots, resolver)
+        except granja_lock.Rotando:
+            print("captura: el móvil está rotando; probando otro", flush=True)
         except ErrorRed as exc:
             print(f"captura: salida con error de red ({exc}); probando otro móvil", flush=True)
         except Exception as exc:  # noqa: BLE001 - se informa al backend

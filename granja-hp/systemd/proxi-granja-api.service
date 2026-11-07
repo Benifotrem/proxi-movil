@@ -7,6 +7,8 @@ Type=simple
 User=cesar
 # Claves ADB adicionales (*.adb_key): móviles autorizados desde otro equipo.
 Environment=ADB_VENDOR_KEYS=/etc/proxi-granja/adb_keys
+# Opcional: con CAPTURA_API_URL y CAPTURA_TOKEN, la API avisa a la plataforma de cada rotación.
+EnvironmentFile=-/etc/proxi-granja/captura.env
 ExecStart=/usr/bin/python3 /opt/proxi-granja/api.py
 Restart=always
 RestartSec=3

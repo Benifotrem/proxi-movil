@@ -172,7 +172,7 @@ Los Android dan al HP una IP aleatoria dentro de la misma subred de anclaje (`19
 
 | Pieza | Detalle |
 |-------|---------|
-| Inventario | `/etc/proxi-granja/modems.conf`: `id usb adb_serial puerto rotacion` (una línea por móvil). El móvil se localiza por su **número de serie** en cualquier puerto USB; la ruta `usb` solo es respaldo |
+| Inventario | `/etc/proxi-granja/modems.conf`: `id usb adb_serial puerto rotacion [driver] [ssh_port]` (una línea por móvil; `driver` = `adb` por defecto o `ssh_jailbreak` para iPhone). El móvil se localiza por su **número de serie** en cualquier puerto USB; la ruta `usb` solo es respaldo |
 | Credenciales | `/var/lib/proxi-granja/credenciales/<id>` (las genera la API, 0600) y, para altas manuales, `/etc/proxi-granja/credentials` (root:cesar 0640): `id usuario contraseña`. Prevalecen las de la API |
 | Namespace | `modem_<usb>`; dentro, la interfaz USB renombrada `mdm<N>` (DHCP con `dhcpcd`) y `lan0` 10.200.N.2/30 |
 | 3proxy | `proxi-modem-proxy@<id>`: `auto` (HTTP+SOCKS5) con `auth strong` en 10.200.N.2:3128, ejecutado con `NetworkNamespacePath=` desde el rootfs de la imagen `proxy-3proxy` |
@@ -180,7 +180,9 @@ Los Android dan al HP una IP aleatoria dentro de la misma subred de anclaje (`19
 | Sincronización | `proxi-granja sync` cada 30 s (timer), al conectar un móvil (udev) y al cambiar credenciales o límites (`proxi-granja-sync.path`): crea namespaces, mueve interfaces, reactiva el anclaje USB por ADB, genera configs, aplica NAT y límites, cuenta tráfico. ADB se ejecuta como `ADB_USER` (`/etc/proxi-granja/granja.env`) |
 | Tráfico | `/var/lib/proxi-granja/trafico.db`: bytes acumulados por móvil (contador del veth `pg<N>`) |
 | FUP | `/var/lib/proxi-granja/limites/<id>` (kbps, lo escribe la API): `tc tbf` en `lan0` (bajada) y `pg<N>` (subida) |
-| networkd | `05-proxi-modems.network`: ignora las interfaces de anclaje USB (`rndis_host`, `cdc_ether`, `cdc_ncm`) |
+| networkd | `05-proxi-modems.network`: ignora las interfaces de anclaje USB (`rndis_host`, `cdc_ether`, `cdc_ncm` y `ipheth` de iPhone) |
+| Drivers | `drivers.py`: `AndroidDriver` (ADB) e `IosDriver` (SSH por `iproxy` a `127.0.0.1:<ssh_port>`, clave `/etc/proxi-granja/ios_ssh_key`): `rotate_ip()`, `read_latest_sms()`, `reboot_radio()` |
+| Cerrojo de rotación | `granja_lock.py`, en `/var/lib/proxi-granja/locks`: las peticiones de captura y sondas toman el cerrojo compartido del móvil; `/rotate` marca el móvil, espera a que terminen (máx. 20 s, si no 409) y avisa a la plataforma (`start`/`end`) si la API tiene `captura.env` |
 | API | `proxi-granja-api` (usuario `cesar`), `/opt/proxi-granja/api.py`, puerto 5000 |
 
 `N = puerto - 20000`. Rotación por `airplane` (modo avión; intenta `airplane_mode_radios=cell`, que MIUI no permite por ADB sin "Depuración USB (ajustes de seguridad)" — no es imprescindible porque el anclaje USB no está en la lista por defecto) o `data` (`svc data`, Android < 8).
@@ -229,8 +231,21 @@ Trabajador del HP que genera las muestras gratuitas de nodecellular.com sin inte
 - **Comportamiento:** ritmo bajo (`CAPTURA_DOMAIN_DELAY`, 8 s por dominio, de una en una), respeta `robots.txt`, no resuelve CAPTCHAs ni salta sistemas antibot. Un bloqueo (401/403/429/503 o desafío) vuelve como `blocked_*` y la muestra pasa a revisión.
 - **Errores de red de la granja** (móvil sin datos, 502 del túnel, tiempo agotado): se prueba por el otro móvil; si fallan todos, la tarea no se informa y se reintenta al caducar la reserva (máx. 3 intentos).
 - **Webs con control antibot** (p. ej. una página «Client Challenge» que exige JavaScript) vuelven como `blocked_challenge`: no se capturan automáticamente.
-- **Pruebas:** `python3 -m unittest discover -s granja-hp/tests` (sin red).
+- **Pruebas:** `python3 -m unittest discover -s granja-hp/tests` (sin red; incluyen drivers, cerrojo, sondas y `/rotate`).
 - **Activar** (tras `instalar.sh`): poner `CAPTURA_TOKEN` en `/etc/proxi-granja/captura.env` y `sudo systemctl enable --now proxi-captura`. Registro: `journalctl -u proxi-captura -f`.
+
+## Sondas de la plataforma (`granja-hp/http_worker.py`)
+
+Trabajador de Sentinel ISP: pide sondas a `POST https://nodecellular.com/worker/v2/claim` (mismo `captura.env`) y comprueba cada URL **desde el móvil que indica la tarea**.
+
+- **Clasificación:** `ok`, `http_451`, `challenge`, `http_error`, `timeout`, `dns`, `network` y `node_error`. Ante un fallo de red se prueba una URL de control (`SONDA_CONTROL_URL`) por el mismo móvil; si tampoco llega, es `node_error` y no cuenta contra el dominio.
+- **Rotación:** omite los móviles en `excluded_nodes` o marcados como rotando, y cada sonda va dentro del cerrojo compartido.
+- **Alcance:** solo dominios que el cliente verificó como propios (lo controla el backend), sin seguir redirecciones a la red interna.
+- **Activar** (tras `instalar.sh`): `sudo systemctl enable --now proxi-sondas` y `sudo systemctl restart proxi-granja-api proxi-captura`. Registro: `journalctl -u proxi-sondas -f`.
+
+### iPhone (preparado, sin activar)
+
+Línea de `modems.conf`: `iphone_1 <usb> <udid> 20003 commcenter ssh_jailbreak 2222`. Requiere jailbreak con OpenSSH y `sqlite3`, `iproxy 2222 22 <udid>` en marcha (libimobiledevice) y la clave pública de `/etc/proxi-granja/ios_ssh_key` autorizada en el iPhone. La rotación reinicia `CommCenter`; los SMS se leen de `sms.db`.
 
 ## Notas de seguridad
 

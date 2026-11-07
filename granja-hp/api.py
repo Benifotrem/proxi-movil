@@ -15,11 +15,17 @@ import json
 import os
 import secrets
 import subprocess
+import sys
 import threading
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import drivers  # noqa: E402
+import granja_lock  # noqa: E402
 
 CONF_DIR = os.environ.get("PROXI_GRANJA_CONF", "/etc/proxi-granja")
 STATE_DIR = os.environ.get("PROXI_GRANJA_STATE", "/run/proxi-granja")
@@ -32,7 +38,10 @@ PUERTO_INTERNO = 3128
 IP_TIMEOUT = 10             # segundos máximos por consulta de IP pública
 ADB_TIMEOUT = 15            # segundos máximos por comando ADB
 ROTATE_MIN_INTERVAL = 10    # segundos mínimos entre rotaciones del mismo móvil
-ROTATE_PAUSE = 3            # segundos con la red celular apagada
+ROTATE_DRAIN_WAIT = 20      # segundos máximos esperando a que terminen las peticiones en vuelo antes de rotar
+# Aviso a la plataforma (nodecellular.com) de que un móvil rota: mismas variables que el trabajador.
+PLATAFORMA_URL = os.environ.get("CAPTURA_API_URL", "").rstrip("/")
+PLATAFORMA_TOKEN = os.environ.get("CAPTURA_TOKEN", "")
 NEW_IP_WAIT = 25            # segundos máximos esperando la IP nueva
 ESTADO_MAX_EDAD = 120       # si estado.json es más viejo, la sincronización no está corriendo
 LIMITE_MIN_KBPS, LIMITE_MAX_KBPS = 64, 1000000
@@ -51,8 +60,26 @@ def inventario():
             if len(campos) < 5:
                 continue
             mid, usb, serial, puerto, rotacion = campos[:5]
-            modems[mid] = {"usb": usb, "serial": serial, "port": int(puerto), "rotation": rotacion}
+            modems[mid] = {"usb": usb, "serial": serial, "port": int(puerto), "rotation": rotacion,
+                           # Opcionales: driver (adb | ssh_jailbreak) y puerto SSH local de iproxy (iPhone).
+                           "driver": campos[5] if len(campos) > 5 else "adb",
+                           "ssh_port": int(campos[6]) if len(campos) > 6 and campos[6].isdigit() else None}
     return modems
+
+
+def notificar_plataforma(mid, estado):
+    """Avisa a la plataforma de que el móvil empieza (start) o termina (end) de rotar. Sin reintentos:
+    si falla, la plataforma libera sola el semáforo a los 120 s."""
+    if not PLATAFORMA_URL or len(PLATAFORMA_TOKEN) < 32:
+        return
+    req = urllib.request.Request(f"{PLATAFORMA_URL}/internal/node/{mid}/rotating", method="POST",
+                                 data=json.dumps({"state": estado}).encode(), headers={
+                                     "Authorization": f"Bearer {PLATAFORMA_TOKEN}", "Content-Type": "application/json",
+                                     "Accept": "application/json", "User-Agent": "proxi-granja-api/1"})
+    try:
+        urllib.request.urlopen(req, timeout=4).close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso de rotación {mid}/{estado} no entregado: {exc}", flush=True)
 
 
 def credenciales():
@@ -121,10 +148,6 @@ def ip_publica(mid, modem, creds):
         return ""
 
 
-class AdbError(Exception):
-    pass
-
-
 def limite_kbps(mid):
     try:
         with open(os.path.join(DATA_DIR, "limites", mid)) as f:
@@ -132,14 +155,6 @@ def limite_kbps(mid):
         return int(valor) if valor.isdigit() else None
     except FileNotFoundError:
         return None
-
-
-def adb(serial, *args):
-    out = subprocess.run(["adb", "-s", serial, "shell", *args],
-                         capture_output=True, text=True, timeout=ADB_TIMEOUT)
-    if out.returncode != 0:
-        lineas = (out.stderr or out.stdout).strip().splitlines()
-        raise AdbError(f"adb {' '.join(args)}: {lineas[0] if lineas else f'código {out.returncode}'}")
 
 
 def lock_de(mid):
@@ -205,36 +220,38 @@ class GranjaHandler(BaseHTTPRequestHandler):
 
             inicio = time.monotonic()
             creds = credenciales()
-            ip_anterior = ip_publica(mid, modem, creds)
             try:
-                if modem["rotation"] == "airplane":
-                    # Que el modo avión apague solo la radio celular. Algunas ROM (MIUI) no dejan
-                    # cambiar este ajuste por ADB; el anclaje USB no suele estar en la lista por defecto.
-                    try:
-                        adb(modem["serial"], "settings", "put", "global", "airplane_mode_radios", "cell")
-                    except AdbError:
-                        pass
-                    adb(modem["serial"], "cmd", "connectivity", "airplane-mode", "enable")
-                    time.sleep(ROTATE_PAUSE)
-                    adb(modem["serial"], "cmd", "connectivity", "airplane-mode", "disable")
-                else:
-                    adb(modem["serial"], "svc", "data", "disable")
-                    time.sleep(ROTATE_PAUSE)
-                    adb(modem["serial"], "svc", "data", "enable")
-            except (AdbError, subprocess.TimeoutExpired) as exc:
-                # 500 y 503 (no 502/504): Cloudflare sustituye esos por su propia página de error.
-                self.send_json(500, {"status": "adb_error", "device": mid, "error": str(exc)})
+                driver = drivers.driver_para(modem)
+            except drivers.DriverError as exc:
+                self.send_json(500, {"status": "driver_error", "device": mid, "error": str(exc)})
                 return
-            finally:
-                _last_rotation[mid] = time.monotonic()
+            try:
+                # Exclusivo: los trabajadores dejan de usar el móvil y se espera a sus peticiones en vuelo.
+                with granja_lock.rotacion(mid, espera=ROTATE_DRAIN_WAIT):
+                    notificar_plataforma(mid, "start")
+                    try:
+                        ip_anterior = ip_publica(mid, modem, creds)
+                        try:
+                            driver.rotate_ip()
+                        except (drivers.DriverError, subprocess.TimeoutExpired) as exc:
+                            # 500 y 503 (no 502/504): Cloudflare sustituye esos por su propia página de error.
+                            self.send_json(500, {"status": "adb_error", "device": mid, "error": str(exc)})
+                            return
+                        finally:
+                            _last_rotation[mid] = time.monotonic()
 
-            ip_nueva = ""
-            limite = time.monotonic() + NEW_IP_WAIT
-            while time.monotonic() < limite:
-                ip_nueva = ip_publica(mid, modem, creds)
-                if ip_nueva and ip_nueva != ip_anterior:
-                    break
-                time.sleep(1.5)
+                        ip_nueva = ""
+                        limite = time.monotonic() + NEW_IP_WAIT
+                        while time.monotonic() < limite:
+                            ip_nueva = ip_publica(mid, modem, creds)
+                            if ip_nueva and ip_nueva != ip_anterior:
+                                break
+                            time.sleep(1.5)
+                    finally:
+                        notificar_plataforma(mid, "end")
+            except granja_lock.Ocupado as exc:
+                self.send_json(409, {"status": "busy", "device": mid, "error": str(exc)})
+                return
 
             self.send_json(200 if ip_nueva else 503, {
                 "status": "success" if ip_nueva else "no_ip",
