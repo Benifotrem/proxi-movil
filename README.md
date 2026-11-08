@@ -236,7 +236,7 @@ Trabajador del HP que genera las muestras gratuitas de nodecellular.com sin inte
 
 ## Sondas de la plataforma (`granja-hp/http_worker.py`)
 
-Trabajador de Sentinel ISP: pide sondas a `POST https://nodecellular.com/worker/v2/claim` (mismo `captura.env`) y comprueba cada URL **desde el móvil que indica la tarea**.
+Trabajador de la plataforma: pide tareas a `POST https://nodecellular.com/worker/v2/claim` (mismo `captura.env`) y las ejecuta **desde el móvil que indica cada una**: sondas de Sentinel ISP (`probe`) y recorridos de redirecciones de Ad Compliance (`trace`: hasta 10 saltos HTTP o `meta refresh`, con código, tiempo y cabeceras de cada salto; de las cookies solo el nombre; nunca visita hosts de clic de anuncios de pago ni la red interna).
 
 - **Clasificación:** `ok`, `http_451`, `challenge`, `http_error`, `timeout`, `dns`, `network` y `node_error`. Ante un fallo de red se prueba una URL de control (`SONDA_CONTROL_URL`) por el mismo móvil; si tampoco llega, es `node_error` y no cuenta contra el dominio.
 - **Rotación:** omite los móviles en `excluded_nodes` o marcados como rotando, y cada sonda va dentro del cerrojo compartido.
