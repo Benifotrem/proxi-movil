@@ -300,3 +300,71 @@ class RotacionApi(unittest.TestCase):
         self.assertEqual((codigo, r["status"]), (409, "busy"))
         self.assertEqual(self.rotaciones, [])
         self.assertEqual(self.avisos, [], "sin cerrojo no se avisa a la plataforma")
+
+
+class Recorridos(unittest.TestCase):
+    """trace de Ad Compliance con la red simulada."""
+    SALIDA = ("http://10.200.1.2:3128", "u:p")
+    RES = staticmethod(resolver({"trk.red.com": ["151.101.1.1"], "tienda.es": ["151.101.1.2"], "interna.es": ["10.0.0.5"],
+                                 "www.googleadservices.com": ["142.250.1.1"]}))
+    PAYLOAD = {"url": "https://trk.red.com/c/1", "max_hops": 10, "user_agent": "UA-movil",
+               "blocked_hosts": ["googleadservices.com", "doubleclick.net"]}
+
+    def medidor(self, respuestas, control=(204, "", "", 30)):
+        respuestas = dict(respuestas)
+        respuestas.setdefault(http_worker.CONTROL_URL, control)
+        llamadas = []
+
+        def m(url, salida, ua=None, cab=None):
+            llamadas.append((url, ua))
+            r = respuestas[url]
+            if isinstance(r, Exception):
+                raise r
+            codigo, cuerpo, location, ttfb, *cabeceras = r
+            if cab is not None:
+                cab.extend(cabeceras[0] if cabeceras else [])
+            return codigo, cuerpo, location, ttfb
+        m.llamadas = llamadas
+        return m
+
+    def test_redirecciones_meta_y_cabeceras(self):
+        m = self.medidor({
+            "https://trk.red.com/c/1": (302, "", "/r?id=9", 120, [("Location", "/r?id=9"), ("Set-Cookie", "sid=secreto; Path=/"), ("Server", "nginx")]),
+            "https://trk.red.com/r?id=9": (200, '<meta http-equiv="refresh" content="0; url=https://tienda.es/oferta?a=1&amp;b=2">', "", 90),
+            "https://tienda.es/oferta?a=1&b=2": (200, "<html>oferta</html>", "", 200),
+        })
+        status, r = http_worker.trazar(self.PAYLOAD, self.SALIDA, self.RES, m)
+        self.assertEqual(status, "ok")
+        self.assertEqual([(h["status"], h["kind"]) for h in r["hops"]], [(302, "http"), (200, "http"), (200, "meta")])
+        self.assertEqual(r["final_url"], "https://tienda.es/oferta?a=1&b=2")
+        self.assertEqual(r["final_status"], 200)
+        self.assertEqual(r["hops"][0]["headers"]["set-cookie"], "sid", "de las cookies solo el nombre")
+        self.assertEqual(r["hops"][0]["headers"]["server"], "nginx")
+        self.assertTrue(all(ua == "UA-movil" for _, ua in m.llamadas))
+
+    def test_nunca_visita_clics_de_anuncios_ni_red_interna(self):
+        m = self.medidor({"https://trk.red.com/c/1": (302, "", "https://www.googleadservices.com/pagead/aclk?x=1", 50)})
+        _, r = http_worker.trazar(self.PAYLOAD, self.SALIDA, self.RES, m)
+        self.assertEqual(r["error"], "ad_click_host")
+        self.assertEqual([u for u, _ in m.llamadas], ["https://trk.red.com/c/1"])
+        m = self.medidor({"https://trk.red.com/c/1": (302, "", "http://interna.es/admin", 50)})
+        _, r = http_worker.trazar(self.PAYLOAD, self.SALIDA, self.RES, m)
+        self.assertEqual(r["error"], "url_not_public")
+        self.assertEqual(len(m.llamadas), 1)
+
+    def test_bucle_y_fallo_del_movil(self):
+        m = self.medidor({"https://trk.red.com/c/1": (302, "", "https://trk.red.com/c/1", 50)})
+        _, r = http_worker.trazar(dict(self.PAYLOAD, max_hops=3), self.SALIDA, self.RES, m)
+        self.assertEqual((r["error"], len(r["hops"])), ("too_many_hops", 4))
+        m = self.medidor({"https://trk.red.com/c/1": captura.ErrorRed("curl 56")}, control=captura.ErrorRed("sin red"))
+        _, r = http_worker.trazar(self.PAYLOAD, self.SALIDA, self.RES, m)
+        self.assertEqual(r["classification"], "node_error")
+
+    def test_ejecutar_trace(self):
+        tmp = tempfile.TemporaryDirectory()
+        granja_lock.LOCK_DIR = tmp.name
+        m = self.medidor({"https://trk.red.com/c/1": (200, "ok", "", 40)})
+        tarea = {"id": 3, "type": "trace", "node": "m1", "payload": self.PAYLOAD}
+        status, r = http_worker.ejecutar(tarea, set(), self.RES, m, lambda mid: self.SALIDA)
+        self.assertEqual((status, r["final_url"]), ("ok", "https://trk.red.com/c/1"))
+        tmp.cleanup()
