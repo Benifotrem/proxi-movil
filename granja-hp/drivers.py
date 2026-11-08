@@ -40,6 +40,11 @@ class DeviceDriver(ABC):
     def reboot_radio(self):
         """Reinicio completo de la radio celular (más lento que rotate_ip)."""
 
+    def read_incoming(self):
+        """Mensajes entrantes visibles ahora: [{key, sender, body, when_ms|None}]. Por defecto, la bandeja de SMS."""
+        return [{"key": f"sms:{m['id']}", "sender": m["sender"], "body": m["body"], "when_ms": m["date_ms"]}
+                for m in self.read_latest_sms(20)]
+
 
 class AndroidDriver(DeviceDriver):
     os_type = "android"
@@ -75,6 +80,61 @@ class AndroidDriver(DeviceDriver):
 
     def reboot_radio(self):
         self._avion(ROTATE_PAUSE * 3)
+
+    # Apps de mensajes cuyas notificaciones se leen (SMS y RCS). Android 10+ no deja leer la bandeja de SMS
+    # por ADB, pero sí las notificaciones (dumpsys notification --noredact), también en Android 16.
+    APPS_MENSAJES = ("com.google.android.apps.messaging", "com.samsung.android.messaging", "com.android.mms",
+                     "com.android.messaging")
+
+    def read_incoming(self):
+        return self.parse_notifications(self._sh("dumpsys", "notification", "--noredact"), self.APPS_MENSAJES)
+
+    REGISTRO = re.compile(r"^\s*NotificationRecord\(.*?pkg=([\w.]+)")
+    EXTRA = re.compile(r"^\s*(android\.(?:title|text|bigText))=String \((.*)$")
+
+    @classmethod
+    def parse_notifications(cls, salida, paquetes):
+        """Notificaciones de las apps de mensajes: remitente (título), texto completo y hora si la hay."""
+        avisos, actual, pendiente = [], None, None
+        for linea in salida.splitlines():
+            m = cls.REGISTRO.match(linea)
+            if m:
+                actual = {"pkg": m.group(1), "key": None, "when_ms": None} if m.group(1) in paquetes else None
+                if actual is not None:
+                    avisos.append(actual)
+                pendiente = None
+                continue
+            if actual is None:
+                continue
+            if pendiente:  # valor de varias líneas
+                campo, texto = pendiente
+                if linea.rstrip().endswith(")"):
+                    actual[campo] = texto + "\n" + linea.strip()[:-1]
+                    pendiente = None
+                else:
+                    pendiente = (campo, texto + "\n" + linea.strip())
+                continue
+            e = cls.EXTRA.match(linea)
+            if e:
+                valor = e.group(2).rstrip()
+                if valor.endswith(")"):
+                    actual[e.group(1)] = valor[:-1].strip()
+                else:
+                    pendiente = (e.group(1), valor)
+                continue
+            k = re.match(r"^\s*key=(\S+)", linea)
+            if k and actual["key"] is None:
+                actual["key"] = k.group(1)
+            w = re.search(r"\bwhen=(\d{12,})", linea)
+            if w and actual["when_ms"] is None:
+                actual["when_ms"] = int(w.group(1))
+        res = []
+        for a in avisos:
+            cuerpo = a.get("android.bigText") or a.get("android.text") or ""
+            remitente = a.get("android.title") or ""
+            if remitente and cuerpo and a["key"]:
+                res.append({"key": a["key"], "sender": remitente, "body": cuerpo, "when_ms": a["when_ms"]})
+        return res
 
     FILA = re.compile(r"^Row: \d+ _id=(\d+), address=(.*?), date=(\d+), body=(.*)$")
 

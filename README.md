@@ -243,6 +243,15 @@ Trabajador de la plataforma: pide tareas a `POST https://nodecellular.com/worker
 - **Alcance:** solo dominios que el cliente verificó como propios (lo controla el backend), sin seguir redirecciones a la red interna.
 - **Activar** (tras `instalar.sh`): `sudo systemctl enable --now proxi-sondas` y `sudo systemctl restart proxi-granja-api proxi-captura`. Registro: `journalctl -u proxi-sondas -f`.
 
+## Mensajes del laboratorio QA (`granja-hp/sms_listener.py`)
+
+Lee cada 3 s los mensajes entrantes de cada móvil con su driver y los envía a `POST https://nodecellular.com/worker/internal/node/<id>/sms` (mismo `captura.env`).
+
+- **Android:** desde Android 10 la bandeja de SMS no se puede leer por ADB (`Permission Denial`), pero sí las **notificaciones** de la app de mensajes (`dumpsys notification --noredact`): remitente y texto completo, también SMS y RCS. Probado en el Redmi 6 (Android 9, `com.android.mms`) y en el Galaxy Z Flip5 (Android 16, Mensajes de Google): los códigos OTP salen en claro.
+- **Hora de llegada:** la del aviso si el móvil la da (`when=`, Android 10+); si no, cuando el lector la ve. Al arrancar no se reenvían los avisos que ya estaban, salvo que traigan hora de los últimos 2 minutos.
+- **Privacidad:** el lector no guarda ni registra el texto. La plataforma solo guarda los mensajes de remitentes autorizados en una sesión QA activa en ese móvil, y descarta el resto.
+- **Activar:** `sudo systemctl enable --now proxi-sms`. Registro: `journalctl -u proxi-sms -f`.
+
 ### iPhone (preparado, sin activar)
 
 Línea de `modems.conf`: `iphone_1 <usb> <udid> 20003 commcenter ssh_jailbreak 2222`. Requiere jailbreak con OpenSSH y `sqlite3`, `iproxy 2222 22 <udid>` en marcha (libimobiledevice) y la clave pública de `/etc/proxi-granja/ios_ssh_key` autorizada en el iPhone. La rotación reinicia `CommCenter`; los SMS se leen de `sms.db`.

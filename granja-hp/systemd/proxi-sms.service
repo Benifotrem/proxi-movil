@@ -1,0 +1,19 @@
+[Unit]
+Description=Lector de mensajes del laboratorio QA (nodecellular.com) por ADB
+After=network-online.target proxi-granja-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cesar
+# Mismo backend y token que los trabajadores; claves ADB adicionales como la API.
+EnvironmentFile=/etc/proxi-granja/captura.env
+Environment=ADB_VENDOR_KEYS=/etc/proxi-granja/adb_keys
+ExecStart=/usr/bin/python3 /opt/proxi-granja/sms_listener.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
