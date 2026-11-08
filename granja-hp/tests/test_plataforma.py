@@ -468,3 +468,39 @@ class LecturaMensajes(unittest.TestCase):
         fallar[0] = False
         lector.ciclo({"m1": {}}, lambda m: D())
         self.assertEqual(enviados[0]["messages"][0]["body"], "codigo 123456")
+
+
+class Precios(unittest.TestCase):
+    """capture de Brand Defense con el motor de captura y la red simulada."""
+    SALIDA = ("http://10.200.1.2:3128", "u:p")
+    RES = staticmethod(resolver({"distribuidor.es": ["151.101.1.9"]}))
+
+    def setUp(self):
+        self.orig = captura.descargar
+        captura.DOMAIN_DELAY = 0
+        http_worker.ROBOTS = captura.Robots()
+
+    def tearDown(self):
+        captura.descargar = self.orig
+
+    def test_precio_y_bloqueo(self):
+        pagina = '<script type="application/ld+json">{"@type":"Product","name":"Crema","offers":{"price":"21,90","priceCurrency":"EUR","availability":"InStock"}}</script>'
+        captura.descargar = lambda u, s, cabeceras_extra=(): (404, "", "", "") if u.endswith("robots.txt") else (200, pagina, "", "text/html")
+        status, r = http_worker.leer_precio({"url": "https://distribuidor.es/p/1"}, self.SALIDA, self.RES)
+        self.assertEqual((status, r["status"], r["price"], r["availability"]), ("ok", "ok", 21.9, "in_stock"))
+        http_worker.ROBOTS = captura.Robots()
+        captura.descargar = lambda u, s, cabeceras_extra=(): (404, "", "", "") if u.endswith("robots.txt") else (403, "Access denied", "", "")
+        _, r = http_worker.leer_precio({"url": "https://distribuidor.es/p/1"}, self.SALIDA, self.RES)
+        self.assertEqual(r["error"], "blocked_403")
+
+    def test_movil_sin_salida(self):
+        def falla(u, s, cabeceras_extra=()):
+            raise captura.ErrorRed("curl 7")
+        captura.descargar = falla
+        orig = http_worker.control_ok
+        http_worker.control_ok = lambda salida, medidor: False
+        try:
+            _, r = http_worker.leer_precio({"url": "https://distribuidor.es/p/1"}, self.SALIDA, self.RES)
+        finally:
+            http_worker.control_ok = orig
+        self.assertEqual(r["classification"], "node_error")

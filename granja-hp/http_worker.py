@@ -1,5 +1,5 @@
-"""Trabajador de la plataforma nodecellular.com: sondas de Sentinel ISP (probe) y recorridos de
-redirecciones de Ad Compliance (trace).
+"""Trabajador de la plataforma nodecellular.com: sondas de Sentinel ISP (probe), recorridos de
+redirecciones de Ad Compliance (trace) y lectura de precios de Brand Defense (capture).
 
 Pide tareas al backend (POST {API}/v2/claim), comprueba la URL desde el móvil que indica cada tarea
 (su 3proxy interno) y devuelve la clasificación (POST {API}/v2/tasks/<id>/result):
@@ -16,6 +16,9 @@ Pide tareas al backend (POST {API}/v2/claim), comprueba la URL desde el móvil q
 Recorrido (trace): sigue el enlace de campaña del cliente hasta max_hops saltos (redirecciones HTTP y
 <meta refresh>), con código, URL, tiempo y cabeceras de cada salto (de las cookies, solo el nombre).
 Nunca visita los hosts de clic de anuncios de pago (blocked_hosts) ni la red interna.
+
+Precio (capture): mismo motor que las muestras (captura.py): precio publicado por la propia página
+(JSON-LD, metadatos, microdatos), robots.txt, ritmo bajo por dominio y sin saltar sistemas antibot.
 
 Respeta la rotación: no usa móviles marcados como rotando ni los que la plataforma excluye
 (excluded_nodes), y cada sonda va dentro del cerrojo compartido del móvil (granja_lock).
@@ -160,6 +163,21 @@ def trazar(payload, salida, resolver=socket.getaddrinfo, medidor=medir):
     return "ok", {"hops": saltos, "final_url": url, "error": "too_many_hops"}
 
 
+ROBOTS = captura.Robots()
+
+
+def leer_precio(payload, salida, resolver=socket.getaddrinfo):
+    """Precio de una ficha desde el móvil. Devuelve (status, resultado) para el backend."""
+    try:
+        return "ok", captura._visitar(payload["url"], salida, ROBOTS, resolver)
+    except captura.ErrorRed as exc:
+        if not control_ok(salida, medir):
+            return "ok", {"classification": "node_error", "error": str(exc)[:200]}
+        return "ok", {"status": "failed", "error": "network"}
+    except Exception as exc:  # noqa: BLE001
+        return "failed", {"classification": "node_error", "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
 def control_ok(salida, medidor):
     """¿Tiene salida a Internet el móvil? (si no, el fallo es del móvil, no del dominio)."""
     try:
@@ -216,7 +234,7 @@ def ejecutar(tarea, excluidos, resolver=socket.getaddrinfo, medidor=medir, salid
     """Resultado (status, resultado) de una tarea, o None si no se puede ejecutar ahora (no se informa:
     la tarea caduca y la plataforma programa la siguiente)."""
     mid = tarea.get("node")
-    if tarea.get("type") not in ("probe", "trace") or not mid or mid in excluidos:
+    if tarea.get("type") not in ("probe", "trace", "capture") or not mid or mid in excluidos:
         return None
     salida = salidas(mid)
     if salida is None:
@@ -225,6 +243,8 @@ def ejecutar(tarea, excluidos, resolver=socket.getaddrinfo, medidor=medir, salid
         with granja_lock.en_uso(mid):
             if tarea["type"] == "trace":
                 return trazar(tarea["payload"], salida, resolver, medidor)
+            if tarea["type"] == "capture":
+                return leer_precio(tarea["payload"], salida, resolver)
             return sondear(tarea["payload"]["url"], salida, resolver, medidor)
     except granja_lock.Rotando:
         return None
@@ -236,7 +256,7 @@ def main():
     print(f"sondas: API {captura.API_URL}", flush=True)
     while True:
         try:
-            r = captura.api("/v2/claim", {"types": ["probe", "trace"], "limit": 10})
+            r = captura.api("/v2/claim", {"types": ["probe", "trace", "capture"], "limit": 10})
         except Exception as exc:  # noqa: BLE001
             print(f"sondas: no se pudieron pedir tareas: {exc}", flush=True)
             time.sleep(IDLE_SLEEP)
@@ -248,7 +268,9 @@ def main():
                 print(f"sondas: tarea {t['id']} omitida (móvil {t.get('node')} rotando o excluido)", flush=True)
                 continue
             status, resultado = hecho
-            if t["type"] == "trace":
+            if t["type"] == "capture":
+                detalle = f"{resultado.get('status') or resultado.get('classification')} {resultado.get('price') or resultado.get('error') or ''}"
+            elif t["type"] == "trace":
                 detalle = f"{len(resultado.get('hops', []))} saltos → {urlparse(resultado.get('final_url') or '').hostname} {resultado.get('error') or ''}"
             else:
                 detalle = f"{resultado.get('classification')} {resultado.get('http_code') or ''} {resultado.get('ttfb_ms') or ''}"
