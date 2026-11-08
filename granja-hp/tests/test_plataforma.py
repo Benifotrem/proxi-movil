@@ -368,3 +368,103 @@ class Recorridos(unittest.TestCase):
         status, r = http_worker.ejecutar(tarea, set(), self.RES, m, lambda mid: self.SALIDA)
         self.assertEqual((status, r["final_url"]), ("ok", "https://trk.red.com/c/1"))
         tmp.cleanup()
+
+
+REDMI_DUMP = """
+    NotificationRecord(0x04dea9ac: pkg=com.android.mms user=UserHandle{0} id=1005 tag=null importance=4 key=0|com.android.mms|1005|null|10014appImportanceLocked=false: Notification(channel=Channel_Msg pri=1))
+      uid=10014 userId=0
+      key=0|com.android.mms|1005|null|10014
+      tickerText=+34600111222: Tu codigo de verificacion es 731205
+      extras={
+          android.title=String (+34600111222)
+          android.text=String (Tu codigo de verificacion es 731205)
+          android.bigText=String (Tu codigo de verificacion es 731205)
+      }
+      stats=SingleNotificationStats{posttimeElapsedMs=1625509228}
+    NotificationRecord(0x1: pkg=com.miui.securitycenter user=UserHandle{0} id=1 tag=null importance=2 key=0|com.miui.securitycenter|1|null|1000: Notification())
+      key=0|com.miui.securitycenter|1|null|1000
+      extras={
+          android.title=String (Security is running)
+          android.text=String (Tap for more information or to stop the app.)
+      }
+"""
+
+FLIP_DUMP = """
+    NotificationRecord(0x0b7d2654: pkg=com.google.android.apps.messaging user=UserHandle{0} id=2 tag=x importance=4 key=0|com.google.android.apps.messaging|2|x|10227: Notification(channel=bugle_default_channel))
+      key=0|com.google.android.apps.messaging|2|x|10227
+      notification=
+            when=1794130770615/1794130770615
+            extras={
+                android.title=String (600 11 12 22)
+                extra_im_notification_earliest_timestamp=Long (1794129541426)
+                android.text=String (Tu código es 482913
+segunda línea)
+            }
+"""
+
+
+class LecturaMensajes(unittest.TestCase):
+    def test_notificaciones_android_9_y_16(self):
+        apps = drivers.AndroidDriver.APPS_MENSAJES
+        redmi = drivers.AndroidDriver.parse_notifications(REDMI_DUMP, apps)
+        self.assertEqual(redmi, [{"key": "0|com.android.mms|1005|null|10014", "sender": "+34600111222",
+                                  "body": "Tu codigo de verificacion es 731205", "when_ms": None}])
+        flip = drivers.AndroidDriver.parse_notifications(FLIP_DUMP, apps)
+        self.assertEqual(flip[0]["sender"], "600 11 12 22")
+        self.assertEqual(flip[0]["body"], "Tu código es 482913\nsegunda línea")
+        self.assertEqual(flip[0]["when_ms"], 1794130770615)
+        e = Ejecutor([(0, REDMI_DUMP, "")])
+        self.assertEqual(len(drivers.AndroidDriver("ABC", runner=e).read_incoming()), 1)
+        self.assertEqual(e.llamadas[0][4:], ["dumpsys", "notification", "--noredact"])
+
+    def test_lector_no_reenvia_lo_antiguo_ni_lo_ya_visto(self):
+        import sms_listener
+        enviados = []
+        ahora = [1794130800.0]
+        lector = sms_listener.Lector(enviar=lambda ruta, datos: enviados.append((ruta, datos)) or {"stored": 1},
+                                     reloj=lambda: ahora[0])
+        avisos = {"m1": [{"key": "k1", "sender": "BANCO", "body": "viejo 111111", "when_ms": None},
+                         {"key": "k2", "sender": "BANCO", "body": "reciente 222222", "when_ms": int(ahora[0] * 1000) - 30000}]}
+
+        class D:
+            def __init__(self, mid):
+                self.mid = mid
+
+            def read_incoming(self):
+                return avisos[self.mid]
+        driver = lambda modem: D(modem["id"])  # noqa: E731
+        lector.ciclo({"m1": {"id": "m1"}}, driver)
+        self.assertEqual(len(enviados), 1, "al arrancar solo lo que trae hora reciente")
+        self.assertEqual([m["body"] for m in enviados[0][1]["messages"]], ["reciente 222222"])
+        self.assertEqual(enviados[0][0], "/internal/node/m1/sms")
+        lector.ciclo({"m1": {"id": "m1"}}, driver)
+        self.assertEqual(len(enviados), 1, "lo ya visto no se reenvía")
+        ahora[0] += 5
+        avisos["m1"].append({"key": "k1", "sender": "BANCO", "body": "nuevo 333333", "when_ms": None})
+        lector.ciclo({"m1": {"id": "m1"}}, driver)
+        self.assertEqual(enviados[1][1]["messages"], [{"sender": "BANCO", "body": "nuevo 333333", "received_at_ms": int(ahora[0] * 1000)}])
+
+    def test_lector_reintenta_si_falla_el_envio(self):
+        import sms_listener
+        fallar = [True]
+        enviados = []
+
+        def enviar(ruta, datos):
+            if fallar[0]:
+                raise OSError("sin red")
+            enviados.append(datos)
+            return {"stored": 1}
+        t = [1000.0]
+        lector = sms_listener.Lector(enviar=enviar, reloj=lambda: t[0])
+        avisos = []
+
+        class D:
+            def read_incoming(self):
+                return avisos
+        lector.ciclo({"m1": {}}, lambda m: D())  # primera lectura: línea base vacía
+        avisos.append({"key": "k", "sender": "BANCO", "body": "codigo 123456", "when_ms": None})
+        lector.ciclo({"m1": {}}, lambda m: D())
+        self.assertEqual(enviados, [])
+        fallar[0] = False
+        lector.ciclo({"m1": {}}, lambda m: D())
+        self.assertEqual(enviados[0]["messages"][0]["body"], "codigo 123456")
