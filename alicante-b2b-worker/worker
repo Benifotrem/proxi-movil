@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Lanzador: usa el entorno propio del worker (~/alicante-b2b-worker/venv) y prioridad baja de CPU y disco.
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DATOS="${B2B_DATA:-$HOME/alicante-b2b-worker}"
+export PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"
+exec nice -n 10 ionice -c3 "$DATOS/venv/bin/python" -m b2bworker.cli "$@"
