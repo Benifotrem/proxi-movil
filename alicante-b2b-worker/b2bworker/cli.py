@@ -193,10 +193,13 @@ def actualizar(con, lote, ruta_excel):
     return n
 
 
-def buscar_telefonos(con, lote, limite, cliente=None, hoy=None, clave=None, prov=None):
+def buscar_telefonos(con, lote, limite, cliente=None, hoy=None, clave=None, prov=None, reintentar=False):
     """Teléfono, web y categoría en Google Maps para las válidas sin teléfono, por orden de encaje y zona."""
     from .fichas import evaluar
     hoy = hoy or date.today()
+    if reintentar:
+        con.execute("UPDATE empresas SET tel_estado=NULL WHERE lote=? AND tel_estado='no_encontrado'", (lote,))
+        con.commit()
     if not clave:
         prov, clave = telefonos.proveedor(DATOS)
     prov = prov or "serpapi"
@@ -219,7 +222,7 @@ def buscar_telefonos(con, lote, limite, cliente=None, hoy=None, clave=None, prov
     log.info("Teléfonos (%s): %d empresas sin teléfono que encajan; se buscan %d", prov, len(candidatas), min(disponibles, len(candidatas)))
     hechas = 0
     for _, _, _, f in candidatas[:disponibles]:
-        empresa = {"razon_social": f["razon_social"], "municipio": f["municipio"], "cp": f["cp"]}
+        empresa = {"razon_social": f["razon_social"], "municipio": f["municipio"], "cp": f["cp"], "direccion": f["direccion"]}
         try:
             r = telefonos.buscar(cliente, clave, empresa, prov)
         except ErrorConsulta as e:
@@ -281,6 +284,7 @@ def main(argv=None):
     a = sub.add_parser("telefonos")
     a.add_argument("--lote")
     a.add_argument("--limite", type=int, default=700)
+    a.add_argument("--reintentar", action="store_true", help="vuelve a buscar las que salieron 'no localizada'")
     a = sub.add_parser("excluir")
     a.add_argument("cif")
     a.add_argument("--motivo", default="Oposición al tratamiento")
@@ -338,7 +342,7 @@ def main(argv=None):
         generar_excel(con, lote)
     elif args.cmd == "telefonos":
         lote = args.lote or ultimo_lote(con)
-        buscar_telefonos(con, lote, args.limite)
+        buscar_telefonos(con, lote, args.limite, reintentar=args.reintentar)
         generar_excel(con, lote)
     elif args.cmd == "excluir":
         excluir(con, args.cif, args.motivo)
