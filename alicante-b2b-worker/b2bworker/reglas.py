@@ -46,6 +46,13 @@ def segmento_por_rango(rango):
     return {"0-2": S3, "3-9": S2, "10-49": S1, "50-99": S45, "100-249": S45}.get(rango or "", "")
 
 
+def segmento_por_estimacion(lo, hi):
+    """Segmento a partir de un rango estimado (p. ej. 6-10): por su punto medio."""
+    if lo is None or hi is None:
+        return ""
+    return segmento_por_empleados((lo + hi) // 2)
+
+
 def palanca(segmento, sector):
     if segmento == S3:
         return P_MICRO

@@ -122,7 +122,8 @@ class Flujo(unittest.TestCase):
         iv = filas_pf["A28015865"]
         self.assertEqual(iv[0], "Alto")
         self.assertIn("DIGITALIZA-CV", iv[4], "industrial y 10-49 empleados (por su Kit Digital)")
-        self.assertEqual(iv[11], "PEREZ LOPEZ ANA (Adm. Unico, 2021-03-02)")
+        self.assertEqual(iv[13], "PEREZ LOPEZ ANA (Adm. Unico, 2021-03-02)")
+        self.assertEqual(iv[9], "10-49 (segmento de su Kit Digital)")
         self.assertIn("ya ha trabajado con ayudas del IVACE.", iv[2])
         self.assertIn("¿podría hablar con Perez Lopez Ana?", iv[3])
         # Un Excel con columnas en otro orden (versión anterior) también se puede reimportar.

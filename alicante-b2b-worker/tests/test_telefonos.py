@@ -120,6 +120,57 @@ class Busqueda(unittest.TestCase):
         self.assertEqual(tuple(beta), ("965 00 00 02", "Google Maps (Serper)"))
         self.assertEqual(telefonos.usadas_mes(self.con, "serper", hoy=HOY), 2)
 
+    def test_importar_telefonos_de_otra_pestana(self):
+        from openpyxl import Workbook
+        wb = Workbook()
+        wb.active.title = "Cartera"
+        wb.active.append(["CLI_ID_FISCAL", "OTRA"])
+        ws = wb.create_sheet("Telefonos")
+        ws.append(["CIF", "CLI_NOMBRE", "TELEFONO FIJO", "MOVIL"])
+        ws.append(["B00000001", "ALFA", "", "+34 600 11 22 33"])
+        ws.append(["B00000003", "GAMMA", "965000000", ""])
+        ws.append(["B99999999", "AJENA", "965111111", ""])
+        ruta = cli.DATOS / "tels.xlsx"
+        wb.save(ruta)
+        self.con.execute("UPDATE empresas SET telefono='965 99 99 99', tel_fuente='Google Maps (Serper)' WHERE cif='B00000001'")
+        self.con.execute("UPDATE empresas SET tel_fuente='tu archivo' WHERE cif='B00000003'")
+        self.assertEqual(cli.importar_telefonos(self.con, "l", ruta), 1)
+        alfa = self.con.execute("SELECT telefono, tel_fuente, tel_estado FROM empresas WHERE cif='B00000001'").fetchone()
+        self.assertEqual(tuple(alfa), ("600 11 22 33", "tu archivo", "importado"), "tus teléfonos mandan sobre los de Google")
+        self.assertEqual(self.con.execute("SELECT telefono FROM empresas WHERE cif='B00000003'").fetchone()[0], "966 11 11 11",
+                         "no pisa un teléfono que ya era tuyo")
+
+    def test_empleados_por_busqueda_web(self):
+        from b2bworker import empleados as E
+        self.assertEqual(E.extraer_rango("Número de empleados: 6 a 10. Ventas..."), (6, 10))
+        self.assertEqual(E.extraer_rango("La empresa tiene entre 11 y 50 empleados"), (11, 50))
+        self.assertEqual(E.extraer_rango("Empleados: 4"), (4, 4))
+        self.assertEqual(E.extraer_rango("Plantilla (2023): 25"), (25, 25))
+        self.assertIsNone(E.extraer_rango("Capital social 3.000 euros"))
+
+        class Web:
+            def __init__(self):
+                self.q = []
+
+            def json(self, url, cabeceras=None, enviar=None):
+                assert url == E.BUSQUEDA
+                self.q.append(enviar["q"])
+                return {"organic": [
+                    {"title": "Otra empresa SL", "snippet": "Empleados: 200", "link": "https://dir.es/otra"},
+                    {"title": "ALFA SIN AYUDAS SL - B00000001", "snippet": "Empleados: 6 a 10", "link": "https://www.directorio.es/alfa"}]}
+        self.con.execute("""UPDATE empresas SET bdns='{"kit_urgente": true, "kit_fecha": "2026-09-01", "kit_segmento": "3-9", "n_concesiones": 1}' WHERE cif='B00000002'""")
+        web = Web()
+        n = cli.buscar_empleados(self.con, "l", 10, cliente=web, hoy=HOY, clave="clave-serper")
+        self.assertEqual(n, 2, "BETA tiene segmento de Kit Digital: no se busca; GAMMA y ALFA sí")
+        self.assertNotIn('"B00000002" empleados', web.q)
+        alfa = self.con.execute("SELECT * FROM empresas WHERE cif='B00000001'").fetchone()
+        self.assertEqual((alfa["emp_web_min"], alfa["emp_web_max"], alfa["emp_web_fuente"]), (6, 10, "directorio.es"))
+        from b2bworker.zonas import Zonas
+        x = cli.clasificar(alfa, Zonas(), HOY)
+        self.assertEqual((x["emp_est"], x["seg_est"]), ("6-10 (web: directorio.es)", "Segmento II (3-9 emp)"))
+        gamma = self.con.execute("SELECT emp_web_estado, emp_web_min FROM empresas WHERE cif='B00000003'").fetchone()
+        self.assertEqual(tuple(gamma), ("sin_dato", None), "el resultado de otra empresa no se usa")
+
     def test_la_clave_se_lee_del_env_de_datos(self):
         (cli.DATOS / ".env").write_text('OTRA=1\nSERPAPI_KEY="abc123"\n')
         import os
