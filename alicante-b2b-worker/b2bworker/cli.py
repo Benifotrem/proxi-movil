@@ -111,6 +111,9 @@ def clasificar(f, zonas, hoy):
     elif web_min is not None:
         seg_est = R.segmento_por_estimacion(web_min, web_max)
         emp_est = f"{web_min}-{web_max} (web: {web_fuente})" if web_min != web_max else f"{web_min} (web: {web_fuente})"
+        if seg_est == R.S250:
+            # Una estimación web nunca descarta: solo el dato confirmado puede sacar a una empresa por tamaño.
+            seg_est, emp_est = "", f"verificar plantilla (estimado {web_min}+, web: {web_fuente})"
     else:
         emp_est = ""
     emp = f["emp_conf"]
