@@ -26,12 +26,13 @@ class Cliente:
             self.dormir(espera)
         self._ultima[host] = time.monotonic()
 
-    def get(self, url, cabeceras=None, binario=False, timeout=30):
+    def get(self, url, cabeceras=None, binario=False, timeout=30, cuerpo=None):
         host = url.split("/")[2]
         ultimo = None
         for intento in range(1, self.reintentos + 1):
             self._turno(host)
-            req = urllib.request.Request(url, headers={"User-Agent": AGENTE, **(cabeceras or {})})
+            req = urllib.request.Request(url, data=cuerpo, method="POST" if cuerpo is not None else "GET",
+                                         headers={"User-Agent": AGENTE, **(cabeceras or {})})
             try:
                 with self.abrir(req, timeout=timeout) as r:
                     datos = r.read()
@@ -50,8 +51,10 @@ class Cliente:
             self.dormir(espera)
         raise ErrorConsulta(ultimo or "sin respuesta")
 
-    def json(self, url, cabeceras=None):
-        texto = self.get(url, {"Accept": "application/json", **(cabeceras or {})})
+    def json(self, url, cabeceras=None, enviar=None):
+        cuerpo = json.dumps(enviar).encode() if enviar is not None else None
+        extra = {"Content-Type": "application/json"} if cuerpo is not None else {}
+        texto = self.get(url, {"Accept": "application/json", **extra, **(cabeceras or {})}, cuerpo=cuerpo)
         try:
             return json.loads(texto)
         except ValueError:
