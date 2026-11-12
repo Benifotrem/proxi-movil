@@ -107,18 +107,24 @@ class Flujo(unittest.TestCase):
         self.assertEqual(wb["Prioridad_A_Urgentes"].max_row, 2)
         self.assertIn("Detalle ayudas (últimas)", cab)
         pf = wb["Listado_Puerta_Fria"]
-        filas_pf = {r[5]: r for r in pf.iter_rows(min_row=2, values_only=True)}
+        filas_pf = {r[7]: r for r in pf.iter_rows(min_row=2, values_only=True)}
         self.assertEqual(set(filas_pf), {"B12345674", "A28015865", "J12345674"}, "solo las consultadas que encajan; nunca descartadas")
         self.assertEqual(filas_pf["J12345674"][0], "Base")
         self.assertEqual([r[0] for r in pf.iter_rows(min_row=2, values_only=True)], ["Alto", "Alto", "Base"], "primero las de mejor encaje")
         kit = filas_pf["B12345674"]
-        self.assertEqual((kit[0], kit[3]), ("Alto", "Inmediata"))
+        self.assertEqual((kit[0], kit[5]), ("Alto", "Inmediata"))
         self.assertIn("caduca hacia el 01/02/2027", kit[1])
-        self.assertIn("Kit Digital: bono vivo", kit[2])
+        self.assertIn("Kit Digital: bono vivo", kit[4])
+        self.assertIn("a KIT RECIENTE SL le concedieron el Kit Digital el 01/08/2026", kit[2])
+        self.assertTrue(kit[2].startswith("Buenos días, soy César Ruzafa, asesor comercial de empresas en Elche."))
+        self.assertTrue(kit[2].endswith("no le llamo más."))
+        self.assertIn("¿podría hablar con el responsable o la gerencia?", kit[3])
         iv = filas_pf["A28015865"]
         self.assertEqual(iv[0], "Alto")
-        self.assertIn("DIGITALIZA-CV", iv[2], "industrial y 10-49 empleados (por su Kit Digital)")
-        self.assertEqual(iv[9], "PEREZ LOPEZ ANA (Adm. Unico, 2021-03-02)")
+        self.assertIn("DIGITALIZA-CV", iv[4], "industrial y 10-49 empleados (por su Kit Digital)")
+        self.assertEqual(iv[11], "PEREZ LOPEZ ANA (Adm. Unico, 2021-03-02)")
+        self.assertIn("ya ha trabajado con ayudas del IVACE.", iv[2])
+        self.assertIn("¿podría hablar con Perez Lopez Ana?", iv[3])
         # Un Excel con columnas en otro orden (versión anterior) también se puede reimportar.
         vieja = Workbook()
         vs = vieja.active
