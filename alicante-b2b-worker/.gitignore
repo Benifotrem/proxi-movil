@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+# Nunca datos de clientes en el repositorio (viven en ~/alicante-b2b-worker).
+*.xlsx
+*.csv
+*.sqlite*
