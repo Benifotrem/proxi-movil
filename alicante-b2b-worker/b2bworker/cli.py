@@ -136,6 +136,7 @@ def clasificar(f, zonas, hoy):
         "ivace": b.get("ivace") or 0, "camara": b.get("camara") or 0,
         "solvencia": "SÍ" if (b.get("recientes") or 0) > 0 else "", "n_ayudas": b.get("n_concesiones") or 0,
         "detalle_ayudas": b.get("detalle") or "",
+        "diputacion": b.get("diputacion") or 0, "importe_3a": b.get("importe_3a") or 0, "ultima_organismo": b.get("ultima_organismo"),
         "sector_est": sector_est, "sector_conf": f["sector_conf"] or "", "seg_est": seg_est,
         "emp_conf": emp, "telefono": telefono, "segmento": segmento, "palanca": "—" if descarte else R.palanca(segmento, sector),
         "prioridad": prioridad, "motivo_prioridad": motivo_prio, "descarte": descarte or "", "consulta": consulta,
