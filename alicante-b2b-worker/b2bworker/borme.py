@@ -26,10 +26,14 @@ ACTOS = [
     "Cancelaciones de oficio", "Primera inscripción", "Apertura de sucursal", "Cierre de Sucursal", "Depósito de libros",
     "Emisión de obligaciones", "Desembolso de dividendos pasivos", "Adaptación", "Fe de erratas", "Anotación preventiva",
     "Empresario Individual", "Datos registrales", "Adaptación Ley 2/95", "Adaptación Ley 44/2015",
+    "Escisión parcial", "Escisión total", "Cesión global de activo y pasivo", "Reducción y ampliación de capital",
+    "Segregación", "Ampliación del objeto social", "Cambio de domicilio", "Nombramiento", "Cese",
 ]
 _ACTO_RE = "|".join(re.escape(a) for a in sorted(ACTOS, key=len, reverse=True))
 ENTRADA = re.compile(r"(?:(?<=\s)|^)(\d{5,7}) - (?=\S)")
-PRIMER_ACTO = re.compile(r"\.?\s*(?:" + _ACTO_RE + r")\.")
+# El nombre (en mayúsculas) termina donde empieza el primer acto (en minúsculas con inicial mayúscula),
+# acabe éste en punto, en dos puntos o siga con más texto ("Escisión parcial.", "Fe de erratas: …").
+PRIMER_ACTO = re.compile(r"\.?\s+(?=(?:" + _ACTO_RE + r")\b)")
 CARGOS_CONTACTO = re.compile(r"^(ADM\.? ?UNICO|ADM\.? ?SOLID|ADM\.? ?MANCOM|ADMINISTRADOR|CONS\.? ?DEL|CON\.? ?DELEG|CONSEJERO DELEGADO|PRESIDENTE|LIQUIDADOR)", re.I)
 
 
@@ -72,7 +76,7 @@ def separar(texto):
         if not m or m.start() == 0:
             continue
         nombre = cuerpo[:m.start()].strip().rstrip(".")
-        actos = cuerpo[m.start():].lstrip(". ")
+        actos = cuerpo[m.end():]
         actos = actos.split(" Datos registrales.")[0]
         if 2 <= len(nombre) <= 200:
             res.append((nombre, actos[:4000]))

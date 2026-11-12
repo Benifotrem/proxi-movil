@@ -21,6 +21,9 @@ Ceses/Dimisiones. Adm. Solid.: LOPEZ RUIZ ANA. Nombramientos. Adm. Solid.: MARTI
 LUISA. Apoderado: SANCHEZ MORA EVA. Datos registrales. T 1, F 2, S 8, H A 1, I/A 9 (5.11.26).
 466103 - PLASTICOS VIEJOS SA.
 Disolución. Voluntaria. Extinción. Datos registrales. T 1, F 1, S 1, H A 2, I/A 5 (5.11.26).
+466104 - PROSOLIA INTERNACIONAL SL. Fe de erratas: Error en la publicación de la inscripción 28ª en cuanto al apellido
+del consejero. Datos registrales. S 8 , H A 148395, I/A 28 ( 2.12.24).
+466105 - LUCENTUM AUTOS SL. Escisión parcial. Sociedades beneficiarias de la escisión: MUTXALUC86 SL. Datos registrales. S 8.
 """
 
 
@@ -30,7 +33,9 @@ class Borme(unittest.TestCase):
 
     def test_separar_y_ficha(self):
         entradas = borme.separar(TEXTO)
-        self.assertEqual([n for n, _ in entradas], ["EJEMPLO DIGITAL SOLUCIONES SL", "CONSTRUCCIONES DEL SUR, SOCIEDAD LIMITADA", "PLASTICOS VIEJOS SA"])
+        self.assertEqual([n for n, _ in entradas], ["EJEMPLO DIGITAL SOLUCIONES SL", "CONSTRUCCIONES DEL SUR, SOCIEDAD LIMITADA", "PLASTICOS VIEJOS SA",
+                                                    "PROSOLIA INTERNACIONAL SL", "LUCENTUM AUTOS SL"])
+        self.assertTrue(entradas[3][1].startswith("Fe de erratas"))
         from b2bworker.textos import nombre_empresa
         self.con.executemany("INSERT INTO borme_actos VALUES (?, ?, ?, ?)", [("2026-11-06", nombre_empresa(n), n, t) for n, t in entradas])
         f = borme.ficha(self.con, "Ejemplo Digital Soluciones, S.L.")
