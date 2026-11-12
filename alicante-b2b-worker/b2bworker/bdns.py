@@ -2,6 +2,7 @@
 import re
 from datetime import date
 
+from .fichas import mas_meses
 from .textos import sin_acentos
 
 URL = "https://www.infosubvenciones.es/bdnstrans/api/concesiones/busqueda?vpd=GE&page={page}&pageSize={size}&nifCif={cif}"
@@ -18,7 +19,8 @@ def consultar(cliente, cif):
         contenido = datos.get("content") or []
         for c in contenido:
             if str(c.get("beneficiario", "")).upper().startswith(cif):
-                res.append({k: c.get(k) for k in ("fechaConcesion", "beneficiario", "importe", "convocatoria", "nivel1", "nivel2", "nivel3", "numeroConvocatoria")})
+                res.append({k: c.get(k) for k in ("fechaConcesion", "beneficiario", "importe", "ayudaEquivalente", "convocatoria",
+                                                  "nivel1", "nivel2", "nivel3", "numeroConvocatoria")})
         if len(contenido) < TAM:
             break
     return res
@@ -41,6 +43,11 @@ def es_kit_consulting(c):
 def es_ivace(c):
     t = _texto(c)
     return "IVACE" in t or "COMPETITIVITAT EMPRESARIAL" in t or "COMPETITIVIDAD EMPRESARIAL" in t
+
+
+def es_diputacion_alicante(c):
+    t = _texto(c)
+    return "DIPUTACI" in t and "ALICANTE" in t
 
 
 def es_camara_alicante(c):
@@ -90,6 +97,10 @@ def resumen(concesiones, hoy=None):
     kitc = sorted([c for c in concesiones if es_kit_consulting(c) and _fecha(c)], key=_fecha, reverse=True)
     ivace = [c for c in concesiones if es_ivace(c)]
     camara = [c for c in concesiones if es_camara_alicante(c)]
+    diputacion = [c for c in concesiones if es_diputacion_alicante(c)]
+    # Ayudas de los últimos 3 años (aprox. del límite de minimis de 300.000 €): ayuda equivalente si consta.
+    tres = [c for c in concesiones if _fecha(c) and (hoy - _fecha(c)).days <= 3 * 365]
+    importe_3a = round(sum(float(c.get("ayudaEquivalente") or c.get("importe") or 0) for c in tres), 2)
     recientes = [c for c in concesiones if (_fecha(c) or date.min).year >= 2025]
     ultima_kit = _fecha(kit[0]) if kit else None
     return {
@@ -98,12 +109,15 @@ def resumen(concesiones, hoy=None):
         "kit_fecha": ultima_kit.isoformat() if ultima_kit else None,
         "kit_importe": round(sum(float(c.get("importe") or 0) for c in kit), 2) if kit else None,
         "kit_segmento": next((segmento_kit(c) for c in kit if segmento_kit(c)), None),
-        "kit_urgente": bool(ultima_kit and (hoy - ultima_kit).days < 183),
+        "kit_urgente": bool(ultima_kit and hoy < mas_meses(ultima_kit, 6)),  # bono aún por canjear
         "kitc_fecha": _fecha(kitc[0]).isoformat() if kitc else None,
         "kitc_importe": round(sum(float(c.get("importe") or 0) for c in kitc), 2) if kitc else None,
         "ivace": len(ivace),
         "camara": len(camara),
         "recientes": len(recientes),
+        "diputacion": len(diputacion),
+        "importe_3a": importe_3a,
+        "ultima_organismo": organismo(max(concesiones, key=lambda c: _fecha(c) or date.min)) if concesiones else None,
         "detalle": detalle(concesiones),
         "ultima": (max(fechas).isoformat() if (fechas := [_fecha(c) for c in concesiones if _fecha(c)]) else None),
     }

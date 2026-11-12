@@ -98,7 +98,7 @@ class Flujo(unittest.TestCase):
         # Excel con las pestañas y fórmulas; el teléfono confirmado sube la prioridad.
         ruta = cli.generar_excel(self.con, "cartera", hoy=HOY)
         wb = load_workbook(ruta)
-        self.assertEqual(wb.sheetnames, ["Resumen_Ejecutivo", "Prioridad_A_Urgentes", "Ruta_Por_Zonas_Alicante", "Por_Cualificar_Llamada",
+        self.assertEqual(wb.sheetnames, ["Resumen_Ejecutivo", "Listado_Puerta_Fria", "Prioridad_A_Urgentes", "Ruta_Por_Zonas_Alicante", "Por_Cualificar_Llamada",
                                          "Base_Completa_Enriquecida", "Descartadas_y_Errores"])
         base = wb["Base_Completa_Enriquecida"]
         cab = [c.value for c in base[1]]
@@ -106,6 +106,19 @@ class Flujo(unittest.TestCase):
         self.assertEqual(base.freeze_panes, "A2")
         self.assertEqual(wb["Prioridad_A_Urgentes"].max_row, 2)
         self.assertIn("Detalle ayudas (últimas)", cab)
+        pf = wb["Listado_Puerta_Fria"]
+        filas_pf = {r[5]: r for r in pf.iter_rows(min_row=2, values_only=True)}
+        self.assertEqual(set(filas_pf), {"B12345674", "A28015865", "J12345674"}, "solo las consultadas que encajan; nunca descartadas")
+        self.assertEqual(filas_pf["J12345674"][0], "Base")
+        self.assertEqual([r[0] for r in pf.iter_rows(min_row=2, values_only=True)], ["Alto", "Alto", "Base"], "primero las de mejor encaje")
+        kit = filas_pf["B12345674"]
+        self.assertEqual((kit[0], kit[3]), ("Alto", "Inmediata"))
+        self.assertIn("caduca hacia el 01/02/2027", kit[1])
+        self.assertIn("Kit Digital: bono vivo", kit[2])
+        iv = filas_pf["A28015865"]
+        self.assertEqual(iv[0], "Alto")
+        self.assertIn("DIGITALIZA-CV", iv[2], "industrial y 10-49 empleados (por su Kit Digital)")
+        self.assertEqual(iv[9], "PEREZ LOPEZ ANA (Adm. Unico, 2021-03-02)")
         # Un Excel con columnas en otro orden (versión anterior) también se puede reimportar.
         vieja = Workbook()
         vs = vieja.active
@@ -130,6 +143,30 @@ class Flujo(unittest.TestCase):
         cli.excluir(self.con, "a-28015865", "pidió no ser contactada")
         self.assertEqual(self.registros()["A28015865"]["prioridad"], "DESCARTADA")
         os.remove(self.entrada)
+
+
+class Fichas(unittest.TestCase):
+    def base(self, **kw):
+        x = {"prioridad": "C", "segmento": "", "sector_conf": "", "sector_est": "", "kit_urgente": "", "kit_fecha": "", "kit_importe": None,
+             "kit_segmento": "", "ivace": 0, "camara": 0, "diputacion": 0, "n_ayudas": 0, "ultima_organismo": None, "importe_3a": 0,
+             "emp_conf": None, "seg_est": ""}
+        x.update(kw)
+        return x
+
+    def test_encaje_y_exclusiones(self):
+        from b2bworker.fichas import evaluar
+        e = evaluar(self.base(), HOY)
+        self.assertEqual((e["encaje"], e["ventana"]), ("Base", "Abril–Mayo 2027"))
+        self.assertNotIn("DIGITALIZA", e["ayudas"], "sin indicios de industria o 10+ empleados no se propone")
+        self.assertIn("nº de empleados", e["confirmar"])
+        e = evaluar(self.base(n_ayudas=3, ultima_organismo="LABORA"), HOY)
+        self.assertEqual(e["encaje"], "Medio")
+        self.assertIn("la última de LABORA", e["frase"])
+        e = evaluar(self.base(segmento=R.S2, seg_est=R.S2, sector_est=R.INDUSTRIAL), HOY)
+        self.assertNotIn("DIGITALIZA", e["ayudas"], "3-9 empleados no llega a DIGITALIZA-CV")
+        self.assertIsNone(evaluar(self.base(importe_3a=310000), HOY), "supera el límite de minimis")
+        self.assertIsNone(evaluar(self.base(prioridad="DESCARTADA"), HOY))
+        self.assertIsNone(evaluar(self.base(segmento=R.S250), HOY))
 
 
 class Reglas(unittest.TestCase):
