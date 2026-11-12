@@ -22,7 +22,7 @@ BASE = [
     ("Municipio", "municipio"), ("Zona", "zona"), ("Administradores (BORME)", "administradores"),
     ("Kit Digital fecha", "kit_fecha"), ("Kit Digital importe (€)", "kit_importe"), ("Kit Digital segmento", "kit_segmento"),
     ("BONO_KIT_VIVO_URGENTE", "kit_urgente"), ("Kit Consulting fecha", "kitc_fecha"), ("Ayudas IVACE (nº)", "ivace"),
-    ("Ayudas Cámara Alicante (nº)", "camara"), ("SOLVENCIA_FISCAL_OK (indicio)", "solvencia"), ("Ayudas BDNS (nº)", "n_ayudas"),
+    ("Ayudas Cámara Alicante (nº)", "camara"), ("SOLVENCIA_FISCAL_OK (indicio)", "solvencia"), ("Ayudas BDNS (nº)", "n_ayudas"), ("Detalle ayudas (últimas)", "detalle_ayudas"),
     ("Sector estimado", "sector_est"), ("Sector (confirmado) ✎", "sector_conf"), ("Segmento estimado", "seg_est"),
     ("Empleados (confirmado) ✎", "emp_conf"), ("Teléfono ✎", "telefono"),
     ("Segmento", "segmento"), ("Palanca recomendada", "palanca"), ("Prioridad", "prioridad"),
@@ -134,12 +134,14 @@ def generar(ruta, registros, contexto):
          x["palanca"], x["administradores"]] for x in sorted([x for x in validos if x["prioridad"] in "AB"], key=orden_ruta)], prioridad_col=3)
 
     # 3b. Por cualificar en la llamada: sin empleados o sin teléfono, con prioridad provisional por subvenciones
-    col_q = ["Zona", "CP", "Municipio", "Pista", "CIF", "Razón social", "Dirección", "Administradores (BORME)", "Kit Digital segmento", "Qué preguntar"]
-    pendientes = [x for x in validos if x["prioridad"] == "C" and x["segmento"] != R.S3]
-    pista = lambda x: 0 if (x["ivace"] or x["camara"]) else 1 if x["kit_fecha"] else 2  # noqa: E731
+    col_q = ["Zona", "CP", "Municipio", "Pista", "CIF", "Razón social", "Dirección", "Administradores (BORME)", "Kit Digital segmento",
+             "Detalle ayudas (últimas)", "Qué preguntar"]
+    # Solo las ya consultadas: en un piloto (--limit) el resto aún no tiene datos.
+    pendientes = [x for x in validos if x["prioridad"] == "C" and x["segmento"] != R.S3 and x["consulta"] == "ok"]
+    pista = lambda x: 0 if (x["ivace"] or x["camara"]) else 1 if x["kit_fecha"] else 2 if x["n_ayudas"] else 3  # noqa: E731
     _tabla(wb.create_sheet("Por_Cualificar_Llamada"), col_q, [
-        [x["zona"], x["cp"], x["municipio"], ["Historial IVACE/Cámara", "Tuvo Kit Digital", "Sin historial"][pista(x)], x["cif"], x["razon_social"],
-         x["direccion"], x["administradores"], x["kit_segmento"],
+        [x["zona"], x["cp"], x["municipio"], ["Historial IVACE/Cámara", "Tuvo Kit Digital", "Otras ayudas públicas", "Sin historial de ayudas"][pista(x)], x["cif"], x["razon_social"],
+         x["direccion"], x["administradores"], x["kit_segmento"], x["detalle_ayudas"],
          "; ".join(p for p, falta in (("nº de empleados", not x["emp_conf"]), ("sector (industrial o servicios)", not x["sector_conf"] and not x["sector_est"]),
                                       ("teléfono de contacto", not x["telefono"])) if falta)]
         for x in sorted(pendientes, key=lambda x: (pista(x), x["zona_idx"], x["cp"] or ""))])

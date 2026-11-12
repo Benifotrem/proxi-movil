@@ -85,6 +85,8 @@ class Flujo(unittest.TestCase):
         iv = r["A28015865"]
         self.assertEqual((iv["segmento"], iv["sector_est"], iv["palanca"], iv["ivace"], iv["prioridad"]), (R.S1, R.INDUSTRIAL, R.P_IVACE, 1, "C"))
         self.assertIn("PEREZ LOPEZ ANA", iv["administradores"])
+        self.assertIn("2025 · IVACE · 3.000 €", iv["detalle_ayudas"])
+        self.assertIn("Red.es", iv["detalle_ayudas"])
         self.assertTrue(r["J12345674"]["consulta"].startswith("error BDNS"))
 
         # Reanudar: solo se repite lo que falló.
@@ -103,6 +105,18 @@ class Flujo(unittest.TestCase):
         self.assertTrue(str(base.cell(2, cab.index("Prioridad") + 1).value).startswith("=IF("))
         self.assertEqual(base.freeze_panes, "A2")
         self.assertEqual(wb["Prioridad_A_Urgentes"].max_row, 2)
+        self.assertIn("Detalle ayudas (últimas)", cab)
+        # Un Excel con columnas en otro orden (versión anterior) también se puede reimportar.
+        vieja = Workbook()
+        vs = vieja.active
+        vs.title = "Base_Completa_Enriquecida"
+        vs.append(["Teléfono ✎", "CIF", "Sector (confirmado) ✎", "Empleados (confirmado) ✎"])
+        vs.append(["966 000 000", "B12345674", "Servicios", 7])
+        ruta_vieja = cli.DATOS / "salida" / "vieja.xlsx"
+        vieja.save(ruta_vieja)
+        self.assertEqual(cli.actualizar(self.con, "cartera", ruta_vieja), 1)
+        kit = self.registros()["B12345674"]
+        self.assertEqual((kit["emp_conf"], kit["sector_conf"], kit["telefono"]), (7, "Servicios", "966 000 000"))
         fila_iv = next(i for i in range(2, base.max_row + 1) if base.cell(i, 1).value == "A28015865")
         base.cell(fila_iv, cab.index("Teléfono ✎") + 1, "965 123 456")
         base.cell(fila_iv, cab.index("Empleados (confirmado) ✎") + 1, 25)
