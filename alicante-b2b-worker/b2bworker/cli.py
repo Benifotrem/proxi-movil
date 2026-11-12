@@ -16,7 +16,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import bdns, borme, cif as cifmod, db, entrada, reglas as R, telefonos
+from . import bdns, borme, cif as cifmod, db, empleados as empmod, entrada, reglas as R, telefonos
 from .red import Cliente, ErrorConsulta
 from .zonas import Zonas
 
@@ -105,6 +105,14 @@ def clasificar(f, zonas, hoy):
     m = db.cargar_json(f["borme"], {}) or {}
     descarte = f["motivo_descarte"] or R.descarte_mercantil(m, hoy)
     seg_est = R.segmento_por_rango(b.get("kit_segmento"))
+    web_min, web_max, web_fuente = (f[k] if k in f.keys() else None for k in ("emp_web_min", "emp_web_max", "emp_web_fuente"))
+    if b.get("kit_segmento"):
+        emp_est = f"{b['kit_segmento']} (segmento de su Kit Digital)"
+    elif web_min is not None:
+        seg_est = R.segmento_por_estimacion(web_min, web_max)
+        emp_est = f"{web_min}-{web_max} (web: {web_fuente})" if web_min != web_max else f"{web_min} (web: {web_fuente})"
+    else:
+        emp_est = ""
     emp = f["emp_conf"]
     segmento = R.segmento_por_empleados(emp) if emp is not None else seg_est
     keys = f.keys()
@@ -137,7 +145,8 @@ def clasificar(f, zonas, hoy):
         "kit_urgente": "SÍ" if b.get("kit_urgente") else "", "kitc_fecha": b.get("kitc_fecha") or "",
         "ivace": b.get("ivace") or 0, "camara": b.get("camara") or 0,
         "solvencia": "SÍ" if (b.get("recientes") or 0) > 0 else "", "n_ayudas": b.get("n_concesiones") or 0,
-        "detalle_ayudas": b.get("detalle") or "", "web": web or "", "categoria": categoria or "",
+        "detalle_ayudas": b.get("detalle") or "", "web": web or "", "categoria": categoria or "", "emp_est": emp_est,
+        "actividad": categoria or (m.get("objeto") or "")[:140],
         "tel_fuente": (tel_fuente or "confirmado") if telefono else "",
         "diputacion": b.get("diputacion") or 0, "importe_3a": b.get("importe_3a") or 0, "ultima_organismo": b.get("ultima_organismo"),
         "sector_est": sector_est, "sector_conf": f["sector_conf"] or "", "seg_est": seg_est,
@@ -243,6 +252,82 @@ def buscar_telefonos(con, lote, limite, cliente=None, hoy=None, clave=None, prov
     return hechas
 
 
+def _candidatas(con, lote, hoy, condicion):
+    """Empresas válidas que encajan en la ficha y cumplen la condición SQL, por encaje y zona."""
+    from .fichas import evaluar
+    zonas = Zonas(DATOS / "zonas.json")
+    res = []
+    for f in con.execute(f"SELECT * FROM empresas WHERE lote=? AND {condicion}", (lote,)):
+        x = clasificar(f, zonas, hoy)
+        e = evaluar(x, hoy) if x["consulta"] == "ok" else None
+        if e:
+            res.append(({"Alto": 0, "Medio": 1, "Base": 2}[e["encaje"]], x["zona_idx"], f["fila"], f, x))
+    res.sort(key=lambda c: c[:3])
+    return [(c[3], c[4]) for c in res]
+
+
+def buscar_empleados(con, lote, limite, cliente=None, hoy=None, clave=None):
+    """Rango de empleados estimado (búsqueda web por CIF) para las que no tienen dato ni segmento de Kit Digital."""
+    hoy = hoy or date.today()
+    if not clave:
+        prov, clave = telefonos.proveedor(DATOS)
+        if prov != "serper":
+            raise SystemExit(f"La estimación de empleados usa Serper: falta SERPER_API_KEY en {DATOS / '.env'}")
+    usadas = telefonos.usadas_mes(con, "serper", hoy=hoy)
+    disponibles = max(0, min(limite, telefonos.TOPES["serper"] - usadas))
+    candidatas = [(f, x) for f, x in _candidatas(con, lote, hoy, "emp_conf IS NULL AND emp_web_estado IS NULL") if not x["kit_segmento"]]
+    log.info("Empleados (serper): %d empresas sin dato de plantilla; se buscan %d", len(candidatas), min(disponibles, len(candidatas)))
+    cliente = cliente or Cliente(pausa=(1.0, 2.0))
+    hechas = 0
+    for f, _ in candidatas[:disponibles]:
+        try:
+            r = empmod.buscar(cliente, clave, {"cif": f["cif"], "razon_social": f["razon_social"]})
+        except ErrorConsulta as e:
+            if "401" in str(e) or "403" in str(e):
+                raise SystemExit("La clave de Serper no es válida o no le quedan búsquedas.") from None
+            log.warning("  %s: búsqueda fallida (%s); se reintentará", f["cif"], e)
+            continue
+        telefonos.contar(con, "serper", hoy=hoy)
+        hechas += 1
+        con.execute("UPDATE empresas SET emp_web_min=?, emp_web_max=?, emp_web_fuente=?, emp_web_estado=? WHERE lote=? AND cif=?",
+                    (r[0], r[1], r[2], "encontrado", lote, f["cif"]) if r else (None, None, None, "sin_dato", lote, f["cif"]))
+        con.commit()
+        log.info("[%d] %s: %s", hechas, f["cif"], f"{r[0]}-{r[1]} empleados ({r[2]})" if r else "sin dato")
+    return hechas
+
+
+ALIAS_TELEFONO = ("TELEFONO", "TELÉFONO", "TLFNO", "TLF", "TEL", "MOVIL", "MÓVIL", "PHONE", "FIJO", "CONTACTO")
+
+
+def importar_telefonos(con, lote, ruta, hoja=None):
+    """Teléfonos de otra pestaña o archivo (tus datos): solo se leen el CIF y el teléfono.
+    Tienen preferencia sobre los de Google; no pisan un teléfono que ya viniera de tu archivo o del Excel."""
+    from openpyxl import load_workbook
+    wb = load_workbook(ruta, read_only=True, data_only=True)
+    hojas = [wb[hoja]] if hoja else wb.worksheets
+    vistos, n = set(), 0
+    for ws in hojas:
+        filas = ws.iter_rows(values_only=True)
+        cab = [str(h or "").strip().upper() for h in next(filas, [])]
+        i_cif = next((cab.index(a) for a in entrada.ALIAS["cif"] if a.upper() in cab), None)
+        i_tel = [i for i, h in enumerate(cab) if any(a in h for a in ALIAS_TELEFONO)]
+        if i_cif is None or not i_tel:
+            log.info("  Hoja %s: sin columnas de CIF y teléfono, se omite", ws.title)
+            continue
+        for fila in filas:
+            cif = cifmod.normalizar(fila[i_cif] if i_cif < len(fila) else "")
+            tel = next((telefonos.telefono_normalizado(fila[i]) for i in i_tel if i < len(fila) and telefonos.telefono_normalizado(fila[i])), None)
+            if not cif or not tel or cif in vistos:
+                continue
+            vistos.add(cif)
+            n += con.execute("UPDATE empresas SET telefono=?, tel_fuente='tu archivo', tel_estado='importado' WHERE lote=? AND cif=? "
+                             "AND (telefono IS NULL OR tel_fuente LIKE 'Google%')", (tel, lote, cif)).rowcount
+        log.info("  Hoja %s: %d CIF con teléfono", ws.title, len(vistos))
+    con.commit()
+    wb.close()
+    return n
+
+
 def excluir(con, cif, motivo):
     cif = cifmod.normalizar(cif)
     con.execute("INSERT OR REPLACE INTO exclusiones VALUES (?, ?, ?)", (cif, motivo, date.today().isoformat()))
@@ -285,6 +370,13 @@ def main(argv=None):
     a.add_argument("--lote")
     a.add_argument("--limite", type=int, default=700)
     a.add_argument("--reintentar", action="store_true", help="vuelve a buscar las que salieron 'no localizada'")
+    a = sub.add_parser("empleados")
+    a.add_argument("--lote")
+    a.add_argument("--limite", type=int, default=700)
+    a = sub.add_parser("importar-telefonos")
+    a.add_argument("--archivo", required=True)
+    a.add_argument("--hoja")
+    a.add_argument("--lote")
     a = sub.add_parser("excluir")
     a.add_argument("cif")
     a.add_argument("--motivo", default="Oposición al tratamiento")
@@ -343,6 +435,14 @@ def main(argv=None):
     elif args.cmd == "telefonos":
         lote = args.lote or ultimo_lote(con)
         buscar_telefonos(con, lote, args.limite, reintentar=args.reintentar)
+        generar_excel(con, lote)
+    elif args.cmd == "empleados":
+        lote = args.lote or ultimo_lote(con)
+        buscar_empleados(con, lote, args.limite)
+        generar_excel(con, lote)
+    elif args.cmd == "importar-telefonos":
+        lote = args.lote or ultimo_lote(con)
+        log.info("Teléfonos importados en el lote %s: %d", lote, importar_telefonos(con, lote, args.archivo, args.hoja))
         generar_excel(con, lote)
     elif args.cmd == "excluir":
         excluir(con, args.cif, args.motivo)

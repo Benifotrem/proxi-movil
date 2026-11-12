@@ -38,7 +38,8 @@ def abrir(ruta):
     con.executescript(ESQUEMA)
     # Columnas añadidas después de la primera versión (bases ya creadas en el HP).
     existentes = {r[1] for r in con.execute("PRAGMA table_info(empresas)")}
-    for col in ("tel_estado TEXT", "tel_fuente TEXT", "web TEXT", "categoria TEXT"):
+    for col in ("tel_estado TEXT", "tel_fuente TEXT", "web TEXT", "categoria TEXT",
+                "emp_web_min INTEGER", "emp_web_max INTEGER", "emp_web_fuente TEXT", "emp_web_estado TEXT"):
         if col.split()[0] not in existentes:
             con.execute(f"ALTER TABLE empresas ADD COLUMN {col}")
     con.commit()

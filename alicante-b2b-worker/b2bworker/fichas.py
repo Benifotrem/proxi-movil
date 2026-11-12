@@ -124,7 +124,8 @@ def evaluar(x, hoy=None):
         frase = ("Sin ayudas previas registradas: entra con el estudio gratuito de su factura de telefonía y fibra, "
                  "y explícale que Pyme Cibersegura (abril) cubre hasta el 60 %.")
 
-    confirmar = [p for p, falta in (("nº de empleados", not x["emp_conf"] and not x["seg_est"]),
+    confirmar = [p for p, falta in (("nº de empleados" + (f" (estimado {x['emp_est'].split(' (')[0]})" if x.get("emp_est") else ""),
+                                     x["emp_conf"] is None),
                                     ("sector (industrial o servicios)", DIGITALIZA in ayudas and not x["sector_conf"]),
                                     ("certificado digital del representante", True)) if falta]
     ayudas.sort(key=lambda a: a[2])
