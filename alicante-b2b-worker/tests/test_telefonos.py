@@ -140,6 +140,12 @@ class Busqueda(unittest.TestCase):
         self.assertEqual(self.con.execute("SELECT telefono FROM empresas WHERE cif='B00000003'").fetchone()[0], "966 11 11 11",
                          "no pisa un teléfono que ya era tuyo")
 
+    def test_importar_telefonos_csv(self):
+        ruta = cli.DATOS / "tels.csv"
+        ruta.write_text("CIF;NOMBRE;TELEFONO\nB00000001;ALFA;965494924\nB00000002;BETA;\n", encoding="utf-8")
+        self.assertEqual(cli.importar_telefonos(self.con, "l", ruta), 1)
+        self.assertEqual(self.con.execute("SELECT telefono FROM empresas WHERE cif='B00000001'").fetchone()[0], "965 49 49 24")
+
     def test_empleados_por_busqueda_web(self):
         from b2bworker import empleados as E
         self.assertEqual(E.extraer_rango("Número de empleados: 6 a 10. Ventas..."), (6, 10))

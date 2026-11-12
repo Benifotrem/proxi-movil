@@ -302,17 +302,20 @@ ALIAS_TELEFONO = ("TELEFONO", "TELÉFONO", "TLFNO", "TLF", "TEL", "MOVIL", "MÓV
 def importar_telefonos(con, lote, ruta, hoja=None):
     """Teléfonos de otra pestaña o archivo (tus datos): solo se leen el CIF y el teléfono.
     Tienen preferencia sobre los de Google; no pisan un teléfono que ya viniera de tu archivo o del Excel."""
-    from openpyxl import load_workbook
-    wb = load_workbook(ruta, read_only=True, data_only=True)
-    hojas = [wb[hoja]] if hoja else wb.worksheets
+    wb = None
+    if str(ruta).lower().endswith((".xlsx", ".xlsm")):
+        from openpyxl import load_workbook
+        wb = load_workbook(ruta, read_only=True, data_only=True)
+        hojas = [(ws.title, ws.iter_rows(values_only=True)) for ws in ([wb[hoja]] if hoja else wb.worksheets)]
+    else:
+        hojas = [(Path(ruta).name, entrada._filas(ruta))]  # CSV (coma, punto y coma o tabulador)
     vistos, n = set(), 0
-    for ws in hojas:
-        filas = ws.iter_rows(values_only=True)
+    for titulo, filas in hojas:
         cab = [str(h or "").strip().upper() for h in next(filas, [])]
         i_cif = next((cab.index(a) for a in entrada.ALIAS["cif"] if a.upper() in cab), None)
         i_tel = [i for i, h in enumerate(cab) if any(a in h for a in ALIAS_TELEFONO)]
         if i_cif is None or not i_tel:
-            log.info("  Hoja %s: sin columnas de CIF y teléfono, se omite", ws.title)
+            log.info("  %s: sin columnas de CIF y teléfono, se omite", titulo)
             continue
         for fila in filas:
             cif = cifmod.normalizar(fila[i_cif] if i_cif < len(fila) else "")
@@ -322,9 +325,10 @@ def importar_telefonos(con, lote, ruta, hoja=None):
             vistos.add(cif)
             n += con.execute("UPDATE empresas SET telefono=?, tel_fuente='tu archivo', tel_estado='importado' WHERE lote=? AND cif=? "
                              "AND (telefono IS NULL OR tel_fuente LIKE 'Google%')", (tel, lote, cif)).rowcount
-        log.info("  Hoja %s: %d CIF con teléfono", ws.title, len(vistos))
+        log.info("  %s: %d CIF con teléfono", titulo, len(vistos))
     con.commit()
-    wb.close()
+    if wb:
+        wb.close()
     return n
 
 
