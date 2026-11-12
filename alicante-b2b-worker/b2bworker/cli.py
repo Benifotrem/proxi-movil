@@ -135,6 +135,7 @@ def clasificar(f, zonas, hoy):
         "kit_urgente": "SÍ" if b.get("kit_urgente") else "", "kitc_fecha": b.get("kitc_fecha") or "",
         "ivace": b.get("ivace") or 0, "camara": b.get("camara") or 0,
         "solvencia": "SÍ" if (b.get("recientes") or 0) > 0 else "", "n_ayudas": b.get("n_concesiones") or 0,
+        "detalle_ayudas": b.get("detalle") or "",
         "sector_est": sector_est, "sector_conf": f["sector_conf"] or "", "seg_est": seg_est,
         "emp_conf": emp, "telefono": telefono, "segmento": segmento, "palanca": "—" if descarte else R.palanca(segmento, sector),
         "prioridad": prioridad, "motivo_prioridad": motivo_prio, "descarte": descarte or "", "consulta": consulta,
@@ -161,12 +162,16 @@ def generar_excel(con, lote, hoy=None):
 def actualizar(con, lote, ruta_excel):
     """Lee las columnas ✎ de la base completa y las guarda en el lote."""
     from openpyxl import load_workbook
-    from .excel import BASE
     wb = load_workbook(ruta_excel, read_only=True, data_only=False)
     ws = wb["Base_Completa_Enriquecida"]
-    titulos = {t: i for i, (t, _) in enumerate(BASE)}
+    filas = ws.iter_rows(values_only=True)
+    # Columnas por su cabecera en ESTE archivo (puede venir de una versión anterior del worker).
+    titulos = {str(t).strip(): i for i, t in enumerate(next(filas)) if t}
+    faltan = [t for t in ("CIF", "Empleados (confirmado) ✎", "Sector (confirmado) ✎", "Teléfono ✎") if t not in titulos]
+    if faltan:
+        raise SystemExit(f"El Excel no tiene las columnas: {', '.join(faltan)}")
     n = 0
-    for fila in ws.iter_rows(min_row=2, values_only=True):
+    for fila in filas:
         cif = fila[titulos["CIF"]]
         if not cif:
             continue
@@ -211,6 +216,7 @@ def main(argv=None):
     a.add_argument("--limit", type=int)
     a.add_argument("--resume", action="store_true", help="continúa el lote (es lo que hace por defecto si ya existe)")
     a.add_argument("--reiniciar", action="store_true", help="vuelve a empezar el lote desde cero")
+    a.add_argument("--reconsultar", action="store_true", help="vuelve a consultar la BDNS de las ya hechas (p. ej. tras una mejora)")
     a = sub.add_parser("borme-indexar")
     a.add_argument("--desde", required=True)
     a.add_argument("--hasta")
@@ -233,6 +239,9 @@ def main(argv=None):
         lote = args.lote or Path(args.input).stem
         nuevo = cargar_lote(con, lote, args.input, reiniciar=args.reiniciar)
         log.info("%s lote %s", "Nuevo" if nuevo else "Reanudando", lote)
+        if args.reconsultar:
+            con.execute("UPDATE empresas SET bdns_estado='pendiente' WHERE lote=? AND bdns_estado='ok'", (lote,))
+            con.commit()
         try:
             procesar(con, lote, args.limit)
         except KeyboardInterrupt:

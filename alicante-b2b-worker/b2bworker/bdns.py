@@ -60,6 +60,29 @@ def _fecha(c):
         return None
 
 
+def organismo(c):
+    """Órgano concedente legible: el nivel más concreto ('ENTIDAD PÚBLICA EMPRESARIAL RED.ES' → 'Red.es')."""
+    nombre = str(c.get("nivel3") or c.get("nivel2") or c.get("nivel1") or "").strip()
+    cortos = {"RED.ES": "Red.es", "IVACE": "IVACE", "COMPETITIVITAT": "IVACE", "LABORA": "LABORA", "CAMARA": "Cámara de Comercio",
+              "DIPUTACI": "Diputación", "AYUNTAMIENTO": "Ayuntamiento", "AJUNTAMENT": "Ayuntamiento", "SEPE": "SEPE"}
+    t = sin_acentos(nombre).upper()
+    for clave, corto in cortos.items():
+        if clave in t:
+            return corto + (" " + nombre.split(" DE ")[-1].title() if corto in ("Diputación", "Ayuntamiento", "Cámara de Comercio") and " DE " in nombre else "")
+    return nombre.title()[:60]
+
+
+def detalle(concesiones, n=5):
+    """Últimas ayudas en texto: '2025 · IVACE · 3.000 € (Programa …)'."""
+    orden = sorted([c for c in concesiones if _fecha(c)], key=_fecha, reverse=True)[:n]
+    partes = []
+    for c in orden:
+        importe = float(c.get("importe") or 0)
+        conv = re.sub(r"\s+", " ", str(c.get("convocatoria") or ""))[:70]
+        partes.append(f"{_fecha(c).year} · {organismo(c)} · {importe:,.0f} €".replace(",", ".") + (f" ({conv})" if conv else ""))
+    return " | ".join(partes)
+
+
 def resumen(concesiones, hoy=None):
     """Indicadores comerciales a partir de las concesiones."""
     hoy = hoy or date.today()
@@ -81,5 +104,6 @@ def resumen(concesiones, hoy=None):
         "ivace": len(ivace),
         "camara": len(camara),
         "recientes": len(recientes),
+        "detalle": detalle(concesiones),
         "ultima": (max(fechas).isoformat() if (fechas := [_fecha(c) for c in concesiones if _fecha(c)]) else None),
     }
