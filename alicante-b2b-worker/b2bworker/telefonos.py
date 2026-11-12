@@ -50,20 +50,38 @@ def _palabras(nombre):
     return {p for p in nombre_empresa(nombre).split() if p not in GENERICAS and len(p) > 1}
 
 
+CALLE_GENERICAS = {"CALLE", "C", "CL", "CL.", "AVENIDA", "AV", "AVDA", "PLAZA", "PZA", "PL", "CAMINO", "CTRA", "CARRETERA", "PASEO",
+                   "PARTIDA", "PTDA", "POLIGONO", "POL", "IND", "INDUSTRIAL", "NAVE", "PARCELA", "LOCAL", "BAJO", "PISO", "PUERTA",
+                   "DE", "DEL", "LA", "EL", "LOS", "LAS", "SN", "S", "N", "NUM", "Y"}
+
+
+def _calle(texto):
+    """Palabras significativas de una dirección (sin tipo de vía ni números)."""
+    t = nombre_empresa(texto)
+    return {p for p in t.split() if p not in CALLE_GENERICAS and not p.isdigit() and len(p) > 2}
+
+
 def coincide(empresa, resultado):
-    """¿El resultado de Maps es esta empresa? Nombre parecido y mismo CP o municipio."""
+    """¿El resultado de Maps es esta empresa? Nombre parecido y misma localización.
+    Si la dirección de Maps trae CP o municipio, han de coincidir. Si no los trae (Serper a veces da solo la
+    calle), se exige un nombre casi idéntico y que la calle coincida con la dirección del archivo."""
     propias, suyas = _palabras(empresa["razon_social"]), _palabras(resultado.get("title", ""))
     if not propias or not suyas:
         return False
-    comunes = len(propias & suyas)
-    if comunes / min(len(propias), len(suyas)) < 0.6:
+    parecido = len(propias & suyas) / min(len(propias), len(suyas))
+    if parecido < 0.6:
         return False
     direccion = str(resultado.get("address") or "")
     cp = (empresa.get("cp") or "").strip()
     if cp and cp in direccion:
         return True
     muni = norm_municipio(empresa.get("municipio") or "")
-    return bool(muni) and muni in norm_municipio(direccion.replace(",", " "))
+    if muni and muni in norm_municipio(direccion.replace(",", " ")):
+        return True
+    if re.search(r"\b\d{5}\b", direccion):
+        return False  # trae otro código postal: es otro sitio
+    cobertura = len(propias & suyas) / len(propias)  # cuánto de NUESTRA razón social aparece en Maps
+    return cobertura >= 0.8 and bool(_calle(direccion) & _calle(empresa.get("direccion") or ""))
 
 
 def telefono_normalizado(t):

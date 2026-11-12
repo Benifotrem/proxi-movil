@@ -44,6 +44,15 @@ class Coincidencia(unittest.TestCase):
         self.assertFalse(telefonos.coincide(emp, {"title": "Talleres García", "address": "C. Real, 5, 03400 Villena"}), "otro municipio")
         self.assertFalse(telefonos.coincide(emp, {"title": "Pinturas López", "address": "03600 Elda"}), "otro nombre")
 
+    def test_direccion_corta_sin_cp_ni_municipio(self):
+        # Caso real (Serper): "Ara Calzados Sl | C. Conde Coloma, 7"
+        emp = {"razon_social": "ARA CALZADOS S L", "cp": "03600", "municipio": "ELDA", "direccion": "CALLE CONDE COLOMA 7"}
+        self.assertTrue(telefonos.coincide(emp, {"title": "Ara Calzados Sl", "address": "C. Conde Coloma, 7"}))
+        self.assertFalse(telefonos.coincide(emp, {"title": "Ara Calzados Sl", "address": "C. Mayor, 3"}), "otra calle")
+        self.assertFalse(telefonos.coincide(emp, {"title": "Ara Calzados Sl", "address": "C. Conde Coloma, 7, 03400 Villena"}), "otro CP")
+        emp2 = {"razon_social": "TALLERES MECANICOS GARCIA PEREZ SL", "cp": "03600", "municipio": "ELDA", "direccion": "CALLE CONDE COLOMA 7"}
+        self.assertFalse(telefonos.coincide(emp2, {"title": "Talleres García", "address": "C. Conde Coloma, 7"}), "nombre solo parecido sin localidad")
+
     def test_formato_telefono(self):
         self.assertEqual(telefonos.telefono_normalizado("+34 965 12 34 56"), "965 12 34 56")
         self.assertEqual(telefonos.telefono_normalizado("965123456"), "965 12 34 56")
