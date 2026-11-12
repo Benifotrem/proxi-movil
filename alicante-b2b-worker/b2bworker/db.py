@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS borme_actos (
     fecha TEXT, clave TEXT, nombre TEXT, texto TEXT
 );
 CREATE INDEX IF NOT EXISTS borme_actos_clave ON borme_actos (clave);
+CREATE TABLE IF NOT EXISTS busquedas (
+    proveedor TEXT, mes TEXT, n INTEGER, PRIMARY KEY (proveedor, mes)
+);
 CREATE TABLE IF NOT EXISTS exclusiones (
     cif TEXT PRIMARY KEY, motivo TEXT, fecha TEXT
 );
@@ -33,6 +36,12 @@ def abrir(ruta):
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.executescript(ESQUEMA)
+    # Columnas añadidas después de la primera versión (bases ya creadas en el HP).
+    existentes = {r[1] for r in con.execute("PRAGMA table_info(empresas)")}
+    for col in ("tel_estado TEXT", "tel_fuente TEXT", "web TEXT", "categoria TEXT"):
+        if col.split()[0] not in existentes:
+            con.execute(f"ALTER TABLE empresas ADD COLUMN {col}")
+    con.commit()
     return con
 
 

@@ -11,6 +11,7 @@ en el HP: un solo proceso con prioridad baja (`nice`/`ionice`), sin servicios ni
 | BDNS (infosubvenciones.es) | Kit Digital / Kit Consulting (fecha, importe, segmento), IVACE, Cámara de Alicante, ayudas 2025-2026 | API pública por CIF, conexión directa, 1 petición cada 1-2,5 s |
 | BORME (datos abiertos del BOE) | Estado (activa, extinguida, concurso, disuelta), constitución, objeto social, administradores vigentes | Índice local de la Sección Primera de Alicante: se descarga una vez y luego solo los días nuevos |
 | Tu archivo | CIF, razón social, dirección, población, CP | Solo se leen esas columnas |
+| Google Maps vía Serper (o SerpApi) | Teléfono, web y categoría del negocio | `worker telefonos`: una búsqueda por empresa válida sin teléfono, por orden de encaje; solo se acepta si coinciden nombre y CP/municipio. Clave en `~/alicante-b2b-worker/.env` (`SERPER_API_KEY` o `SERPAPI_KEY`) |
 
 No se consultan directorios privados (Empresite, Einforma, Axesor…) ni se usan los móviles para esquivar límites:
 sus condiciones lo prohíben y sus bases de datos están protegidas. Empleados, sector y teléfono se confirman en la
@@ -36,6 +37,7 @@ $W borme-indexar --desde 2025-11-01           # índice BORME (el primer año ta
 $W procesar --input ~/alicante-b2b-worker/entrada/cartera.xlsx --lote cartera --limit 20   # piloto
 $W procesar --input ~/alicante-b2b-worker/entrada/cartera.xlsx --lote cartera --resume     # sigue donde se quedó
 $W actualizar --excel ~/alicante-b2b-worker/salida/cartera_AAAAMMDD-HHMM.xlsx               # relee las columnas ✎
+$W telefonos                                  # teléfono, web y categoría (Serper o SerpApi) y regenera el Excel
 $W excluir B12345678                          # oposición: no vuelve a salir
 $W estado
 ```

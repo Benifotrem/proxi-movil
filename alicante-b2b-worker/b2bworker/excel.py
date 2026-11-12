@@ -24,7 +24,8 @@ BASE = [
     ("BONO_KIT_VIVO_URGENTE", "kit_urgente"), ("Kit Consulting fecha", "kitc_fecha"), ("Ayudas IVACE (nº)", "ivace"),
     ("Ayudas Cámara Alicante (nº)", "camara"), ("SOLVENCIA_FISCAL_OK (indicio)", "solvencia"), ("Ayudas BDNS (nº)", "n_ayudas"), ("Detalle ayudas (últimas)", "detalle_ayudas"),
     ("Sector estimado", "sector_est"), ("Sector (confirmado) ✎", "sector_conf"), ("Segmento estimado", "seg_est"),
-    ("Empleados (confirmado) ✎", "emp_conf"), ("Teléfono ✎", "telefono"),
+    ("Empleados (confirmado) ✎", "emp_conf"), ("Teléfono ✎", "telefono"), ("Fuente teléfono", "tel_fuente"),
+    ("Web", "web"), ("Categoría (Google)", "categoria"),
     ("Segmento", "segmento"), ("Palanca recomendada", "palanca"), ("Prioridad", "prioridad"),
     ("Motivo descarte", "descarte"), ("Estado consulta", "consulta"), ("Fuentes", "fuentes"),
 ]
@@ -122,13 +123,13 @@ def generar(ruta, registros, contexto):
     # 1b. Listado para la puerta fría: empresas que encajan en alguna ayuda de la ficha 2027, con lo justo.
     from .fichas import evaluar
     col_pf = ["Encaje", "Por qué llamar ahora", "Apertura por teléfono", "Apertura en visita", "Ayudas que encajan", "Próxima ventana", "Razón social", "CIF", "Municipio", "Zona",
-              "Dirección", "Preguntar por (BORME)", "Teléfono ✎", "Ayudas 3 años (minimis)", "Confirmar en la llamada"]
+              "Dirección", "Preguntar por (BORME)", "Teléfono ✎", "Web", "Ayudas 3 años (minimis)", "Confirmar en la llamada"]
     candidatas = [(x, e) for x in validos if x["consulta"] == "ok" and (e := evaluar(x))]
     orden_enc = {"Alto": 0, "Medio": 1, "Base": 2}
     ws = wb.create_sheet("Listado_Puerta_Fria")
     _tabla(ws, col_pf, [
         [e["encaje"], e["frase"], e["guion_telefono"], e["guion_visita"], e["ayudas"], e["ventana"], x["razon_social"], x["cif"], x["municipio"], x["zona"], x["direccion"],
-         x["administradores"].split("; ")[0] if x["administradores"] else "", x["telefono"], e["minimis"], e["confirmar"]]
+         x["administradores"].split("; ")[0] if x["administradores"] else "", x["telefono"], x["web"], e["minimis"], e["confirmar"]]
         for x, e in sorted(candidatas, key=lambda p: (orden_enc[p[1]["encaje"]], p[0]["zona_idx"], p[0]["municipio"] or ""))])
     fondo_enc = {"Alto": FONDO["A"], "Medio": FONDO["B"], "Base": FONDO["C"]}
     for fila in ws.iter_rows(min_row=2):
