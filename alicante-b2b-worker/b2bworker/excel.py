@@ -121,22 +121,25 @@ def generar(ruta, registros, contexto):
 
     # 1b. Listado para la puerta fría: empresas que encajan en alguna ayuda de la ficha 2027, con lo justo.
     from .fichas import evaluar
-    col_pf = ["Encaje", "Por qué llamar ahora", "Ayudas que encajan", "Próxima ventana", "Razón social", "CIF", "Municipio", "Zona",
+    col_pf = ["Encaje", "Por qué llamar ahora", "Apertura por teléfono", "Apertura en visita", "Ayudas que encajan", "Próxima ventana", "Razón social", "CIF", "Municipio", "Zona",
               "Dirección", "Preguntar por (BORME)", "Teléfono ✎", "Ayudas 3 años (minimis)", "Confirmar en la llamada"]
     candidatas = [(x, e) for x in validos if x["consulta"] == "ok" and (e := evaluar(x))]
     orden_enc = {"Alto": 0, "Medio": 1, "Base": 2}
     ws = wb.create_sheet("Listado_Puerta_Fria")
     _tabla(ws, col_pf, [
-        [e["encaje"], e["frase"], e["ayudas"], e["ventana"], x["razon_social"], x["cif"], x["municipio"], x["zona"], x["direccion"],
+        [e["encaje"], e["frase"], e["guion_telefono"], e["guion_visita"], e["ayudas"], e["ventana"], x["razon_social"], x["cif"], x["municipio"], x["zona"], x["direccion"],
          x["administradores"].split("; ")[0] if x["administradores"] else "", x["telefono"], e["minimis"], e["confirmar"]]
         for x, e in sorted(candidatas, key=lambda p: (orden_enc[p[1]["encaje"]], p[0]["zona_idx"], p[0]["municipio"] or ""))])
     fondo_enc = {"Alto": FONDO["A"], "Medio": FONDO["B"], "Base": FONDO["C"]}
     for fila in ws.iter_rows(min_row=2):
         for c in fila:
             c.fill = fondo_enc.get(fila[0].value, FONDO["C"])
-        fila[1].alignment = Alignment(wrap_text=True, vertical="top")
-    ws.column_dimensions["B"].width = 70
-    ws.column_dimensions["C"].width = 48
+        for i in (1, 2, 3):
+            fila[i].alignment = Alignment(wrap_text=True, vertical="top")
+    ws.column_dimensions["B"].width = 60
+    ws.column_dimensions["C"].width = 80
+    ws.column_dimensions["D"].width = 70
+    ws.column_dimensions["E"].width = 48
     filas_resumen = [("Listado para puerta fría (ficha 2027)", ""), ("  Empresas que encajan", len(candidatas))]
     filas_resumen += [(f"  Encaje {k}", sum(1 for _, e in candidatas if e["encaje"] == k)) for k in ("Alto", "Medio", "Base")]
     filas_resumen.append(("  Fuera por superar el límite de minimis (300.000 € en 3 años)", sum(1 for x in validos if (x.get("importe_3a") or 0) >= 300000)))
