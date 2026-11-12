@@ -153,6 +153,7 @@ class Busqueda(unittest.TestCase):
         self.assertEqual(E.extraer_rango("Empleados: 4"), (4, 4))
         self.assertEqual(E.extraer_rango("Plantilla (2023): 25"), (25, 25))
         self.assertIsNone(E.extraer_rango("Capital social 3.000 euros"))
+        self.assertIsNone(E.extraer_rango("Más de 2500 empleados en toda España"))
 
         class Web:
             def __init__(self):
@@ -174,6 +175,12 @@ class Busqueda(unittest.TestCase):
         from b2bworker.zonas import Zonas
         x = cli.clasificar(alfa, Zonas(), HOY)
         self.assertEqual((x["emp_est"], x["seg_est"]), ("6-10 (web: directorio.es)", "Segmento II (3-9 emp)"))
+        # Una estimación de 250 o más no descarta: se pide verificar.
+        self.con.execute("UPDATE empresas SET emp_web_min=250, emp_web_max=500 WHERE cif='B00000001'")
+        grande = cli.clasificar(self.con.execute("SELECT * FROM empresas WHERE cif='B00000001'").fetchone(), Zonas(), HOY)
+        self.assertNotEqual(grande["prioridad"], "DESCARTADA")
+        self.assertEqual(grande["seg_est"], "")
+        self.assertTrue(grande["emp_est"].startswith("verificar plantilla (estimado 250+"))
         gamma = self.con.execute("SELECT emp_web_estado, emp_web_min FROM empresas WHERE cif='B00000003'").fetchone()
         self.assertEqual(tuple(gamma), ("sin_dato", None), "el resultado de otra empresa no se usa")
 

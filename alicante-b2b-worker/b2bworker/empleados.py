@@ -25,7 +25,7 @@ def extraer_rango(texto):
         if m:
             nums = [int(x) for x in m.groups() if x]
             lo, hi = (nums[0], nums[-1]) if len(nums) > 1 else (nums[0], nums[0])
-            if lo <= hi and hi < 100000:
+            if lo <= hi <= 1000:  # cifras mayores suelen ser otra cosa (importes, años, visitas…)
                 return lo, hi
     return None
 
