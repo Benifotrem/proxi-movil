@@ -40,6 +40,7 @@ $W procesar --input ~/alicante-b2b-worker/entrada/cartera.xlsx --lote cartera --
 $W actualizar --excel ~/alicante-b2b-worker/salida/cartera_AAAAMMDD-HHMM.xlsx               # relee las columnas ✎
 $W importar-telefonos --archivo ~/alicante-b2b-worker/entrada/telefonos.xlsx   # tus teléfonos (solo CIF y teléfono); mandan sobre los de Google
 $W importar-tes --archivo ~/alicante-b2b-worker/entrada/campana_tes.xlsx   # export de la campaña de TES: estado, teléfono, empleados, sector y web
+$W webs --limite 300                          # email y móvil que cada empresa publica en su web (respeta robots.txt; sin coste)
 $W telefonos                                  # teléfono, web y categoría (Serper o SerpApi) y regenera el Excel
 $W empleados                                  # rango de empleados ESTIMADO (búsqueda web por CIF, Serper); confirmar en la llamada
 $W excluir B12345678                          # oposición: no vuelve a salir
@@ -72,3 +73,10 @@ tmux attach -t b2b        # ver progreso (salir sin pararlo: Ctrl+b y luego d)
 
 - No enviar publicidad por email sin consentimiento previo (art. 21 LSSI): teléfono o visita.
 - Los administradores salen del BORME: informar en el primer contacto (art. 14 RGPD) y atender la oposición con `excluir`.
+
+## Email publicado en la web
+
+`webs` solo lee la portada y las páginas de contacto o aviso legal de la propia empresa, con una petición cada
+2-4 segundos y respetando su robots.txt. El email sirve para enviar la Nota Informativa **después** de que el
+interlocutor lo autorice en la llamada: enviar publicidad por email sin consentimiento previo está prohibido
+también entre empresas (art. 21 LSSI).

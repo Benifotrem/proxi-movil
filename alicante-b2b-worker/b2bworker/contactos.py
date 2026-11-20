@@ -11,7 +11,7 @@ import urllib.robotparser
 from .red import AGENTE, ErrorConsulta
 
 EMAIL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
-MOVIL = re.compile(r"(?<![\d+])(?:(?:\+|00)34[\s.\-]?)?([67](?:[\s.\-]?\d){8})(?!\d)")
+MOVIL = re.compile(r"(?<![\d+])(?:(?:\+|00)?34[\s.\-]?)?([67](?:[\s.\-]?\d){8})(?!\d)")
 ENLACE = re.compile(r"""href\s*=\s*["']([^"'#]+)["']""", re.I)
 PAGINAS = ("contact", "aviso-legal", "aviso_legal", "avisolegal", "legal", "quienes", "nosotros", "empresa", "about")
 FALSOS = ("example.", "sentry", "wixpress", "domain.", "dominio.", "email.com", "correo.com", "yourmail", "tuempresa",
@@ -62,7 +62,7 @@ def moviles(pagina):
 def _orden_email(e, dominio):
     usuario, _, dom = e.partition("@")
     propio = dom == dominio or dom.endswith("." + dominio) or dominio.endswith("." + dom)
-    return (0 if propio else 1, 0 if usuario in GENERICOS else 1)
+    return (0 if propio else 1, GENERICOS.index(usuario) if usuario in GENERICOS else len(GENERICOS))
 
 
 def _enlaces(pagina, base):
