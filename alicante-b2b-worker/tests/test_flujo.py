@@ -107,10 +107,11 @@ class Flujo(unittest.TestCase):
         self.assertEqual(wb["Prioridad_A_Urgentes"].max_row, 2)
         self.assertIn("Detalle ayudas (últimas)", cab)
         pf = wb["Listado_Puerta_Fria"]
-        filas_pf = {r[7]: r for r in pf.iter_rows(min_row=2, values_only=True)}
+        self.assertEqual(pf.cell(1, 1).value, "Estado TES")
+        filas_pf = {r[8]: r[1:] for r in pf.iter_rows(min_row=2, values_only=True)}
         self.assertEqual(set(filas_pf), {"B12345674", "A28015865", "J12345674"}, "solo las consultadas que encajan; nunca descartadas")
         self.assertEqual(filas_pf["J12345674"][0], "Base")
-        self.assertEqual([r[0] for r in pf.iter_rows(min_row=2, values_only=True)], ["Alto", "Alto", "Base"], "primero las de mejor encaje")
+        self.assertEqual([r[1] for r in pf.iter_rows(min_row=2, values_only=True)], ["Alto", "Alto", "Base"], "primero las de mejor encaje")
         kit = filas_pf["B12345674"]
         self.assertEqual((kit[0], kit[5]), ("Alto", "Inmediata"))
         self.assertIn("caduca hacia el 01/02/2027", kit[1])
@@ -144,6 +145,71 @@ class Flujo(unittest.TestCase):
         self.assertGreaterEqual(cli.actualizar(self.con, "cartera", ruta), 1)
         iv = self.registros()["A28015865"]
         self.assertEqual((iv["emp_conf"], iv["prioridad"]), (25, "A"))
+
+    def export_tes(self, filas, nombre="tes.xlsx"):
+        """Export de campaña de TES con la estructura real: cabecera tras unas filas de filtro y pares título/valor."""
+        wb = Workbook()
+        ws = wb.active
+        ws.append([])
+        ws.append([None, "GEST_TES_CAMP_0000000999 PRUEBA"])
+        ws.append([None, "Filtrado por"])
+        cab = [None, "Nombre de la campaña", "Id Target Salesforce", "Estado", "Cliente: Nombre del cliente", "Cliente: Número de documento"]
+        titulos = ["NUMERO_TELEFONO", "URL", "SECTOR ACTIVIDAD", "NÚMERO EMPLEADOS", "VALOR POTENCIAL CLIENTES", "Bono Concedido KD", "FECHA ULTIMA VISITA"]
+        for n in range(1, len(titulos) + 1):
+            cab += [f"Título columna {n}", f"Valor columna {n}"]
+        ws.append(cab)
+        for target, estado, cliente, doc, valores in filas:
+            fila = [None, "CAPTAR_NO_CLIENTE alta cliente", target, estado, cliente, doc]
+            for t, v in zip(titulos, valores):
+                fila += [t, v]
+            ws.append(fila)
+        ws.append([None, "Total", "Recuento", len(filas)])
+        ruta = cli.DATOS / "entrada" / nombre
+        wb.save(ruta)
+        return ruta
+
+    def test_importar_tes(self):
+        cli.cargar_lote(self.con, "cartera", self.entrada)
+        cli.procesar(self.con, "cartera", cliente=ClienteFalso(self.respuestas), hoy=HOY)
+        ruta = self.export_tes([
+            ("TGT-1", "Pendiente", "Comunidad", "J12345674", [965111222.0, "WWW.COMUNIDAD.ES", "CONSTRUCCION DE EDIFICIOS RESIDENCIALES", "15", "PLATA", "", "30MAR2025"]),
+            ("TGT-2", "Ganada", "Construcciones", "A28015865", ["965333444", "", "COMERCIO AL POR MAYOR DE MADERA, MATERIALES DE CONSTRUCCION", "30", "ORO", "Kit Digital Fase 1", "01JAN1900"]),
+            ("TGT-3", "En Gestión", "Kit", "B12345674", ["965555666", "", "RESTAURANTES", "4", "BRONCE", "Kit Digital Fase 2", "01JAN1900"]),
+            ("TGT-4", "Pendiente", "Otra", "B99999998", ["965777888", "", "", "", "", "", ""]),
+        ])
+        r = cli.importar_tes(self.con, "cartera", ruta)
+        self.assertEqual((r["campana"], r["targets"], r["en_lote"], r["fuera_lote"], r["empleados"]),
+                         ("GEST_TES_CAMP_0000000999 PRUEBA", 4, 3, 1, 3))
+        reg = self.registros()
+        j = reg["J12345674"]
+        self.assertEqual((j["telefono"], j["tel_fuente"], j["tes_estado"], j["tes_target"]), ("965 11 12 22", "TES", "Pendiente", "TGT-1"))
+        self.assertEqual((j["emp_est"], j["seg_est"], j["sector_est"], j["web"], j["tes_visita"]),
+                         ("15 (TES)", R.S1, R.INDUSTRIAL, "www.comunidad.es", "2025-03-30"))
+        self.assertEqual(j["palanca"], R.P_IVACE, "10-49 empleados e industrial según TES")
+        self.assertEqual(reg["A28015865"]["sector_est"], R.SERVICIOS, "el comercio de materiales de construcción no es construcción")
+        self.assertEqual(reg["A28015865"]["tes_visita"], "", "01JAN1900 es 'sin visita'")
+        self.assertEqual(reg["B12345674"]["emp_est"], "4 (TES)", "la plantilla de TES manda sobre el segmento del Kit Digital")
+
+        wb = load_workbook(cli.generar_excel(self.con, "cartera", hoy=HOY))
+        pf = [r for r in wb["Listado_Puerta_Fria"].iter_rows(min_row=2, values_only=True)]
+        self.assertEqual([(r[0], r[8]) for r in pf], [("En Gestión", "B12345674"), ("Pendiente", "J12345674")],
+                         "orden por estado de TES; la ganada queda fuera de las pestañas de trabajo")
+        self.assertEqual(pf[0][-1], "TGT-3")
+        resumen = {r[0]: r[1] for r in wb["Resumen_Ejecutivo"].iter_rows(values_only=True) if r and r[0]}
+        self.assertEqual(resumen["Campaña TES"], "GEST_TES_CAMP_0000000999 PRUEBA")
+        self.assertEqual(resumen["  Fuera de la campaña"], 2)
+        base = wb["Base_Completa_Enriquecida"]
+        cab = [c.value for c in base[1]]
+        estados = {base.cell(i, 1).value: base.cell(i, cab.index("Estado TES") + 1).value for i in range(2, base.max_row + 1)}
+        self.assertEqual(estados["A28015865"], "Ganada", "en la base completa sigue estando")
+
+        # Un teléfono de tu archivo no se pisa; una nueva importación sustituye a la anterior.
+        self.con.execute("UPDATE empresas SET telefono='966 00 00 00', tel_fuente='tu archivo' WHERE cif='B12345674'")
+        cli.importar_tes(self.con, "cartera", self.export_tes([
+            ("TGT-3", "Ofertado no interesa", "Kit", "B12345674", ["965555666", "", "RESTAURANTES", "4", "", "", ""])], "tes2.xlsx"))
+        reg = self.registros()
+        self.assertEqual((reg["B12345674"]["telefono"], reg["B12345674"]["tes_estado"]), ("966 00 00 00", "Ofertado no interesa"))
+        self.assertEqual(reg["J12345674"]["tes_estado"], "", "ya no está en la campaña")
 
     def test_excluir(self):
         cli.cargar_lote(self.con, "cartera", self.entrada)
@@ -190,6 +256,14 @@ class Reglas(unittest.TestCase):
         self.assertEqual(R.prioridad(None, R.S250, True, 0, 0, ""), "DESCARTADA")
         self.assertEqual(R.descarte_mercantil({"estado": "Activa", "constitucion": "2026-07-01"}, HOY), "Menos de 6 meses de antigüedad (BORME)")
         self.assertIsNone(R.descarte_mercantil({"estado": "Activa", "constitucion": "2026-04-01"}, HOY))
+
+    def test_sector_cnae(self):
+        self.assertEqual(R.sector_cnae("FABRICACION DE CALZADO"), R.INDUSTRIAL)
+        self.assertEqual(R.sector_cnae("TRANSPORTE DE MERCANCIAS POR CARRETERA"), R.INDUSTRIAL)
+        self.assertEqual(R.sector_cnae("ACTIVIDADES DE MAMPOSTERIA Y ALBAÑILERIA"), R.INDUSTRIAL)
+        self.assertEqual(R.sector_cnae("COMERCIO AL POR MENOR DE FERRETERIA, MATERIALES DE CONSTRUCCION"), R.SERVICIOS)
+        self.assertEqual(R.sector_cnae("ACTIVIDADES JURIDICAS"), R.SERVICIOS)
+        self.assertEqual(R.sector_cnae(""), "")
 
 
 if __name__ == "__main__":

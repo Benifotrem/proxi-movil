@@ -39,6 +39,7 @@ $W procesar --input ~/alicante-b2b-worker/entrada/cartera.xlsx --lote cartera --
 $W procesar --input ~/alicante-b2b-worker/entrada/cartera.xlsx --lote cartera --resume     # sigue donde se quedó
 $W actualizar --excel ~/alicante-b2b-worker/salida/cartera_AAAAMMDD-HHMM.xlsx               # relee las columnas ✎
 $W importar-telefonos --archivo ~/alicante-b2b-worker/entrada/telefonos.xlsx   # tus teléfonos (solo CIF y teléfono); mandan sobre los de Google
+$W importar-tes --archivo ~/alicante-b2b-worker/entrada/campana_tes.xlsx   # export de la campaña de TES: estado, teléfono, empleados, sector y web
 $W telefonos                                  # teléfono, web y categoría (Serper o SerpApi) y regenera el Excel
 $W empleados                                  # rango de empleados ESTIMADO (búsqueda web por CIF, Serper); confirmar en la llamada
 $W excluir B12345678                          # oposición: no vuelve a salir
@@ -56,7 +57,10 @@ tmux attach -t b2b        # ver progreso (salir sin pararlo: Ctrl+b y luego d)
 
 - **Descarte:** NIF de persona física, administración u organismo público, extinguida, en concurso o disuelta (BORME),
   menos de 6 meses (BORME) o 250 o más empleados (confirmados).
-- **Segmento:** por empleados confirmados; si no, por el segmento de su Kit Digital.
+- **Segmento:** por empleados confirmados; si no, por los empleados de TES; si no, por el segmento de su Kit Digital.
+- **Campaña TES:** el Excel lleva el estado de cada target y su Id para reportar en TES. Las pestañas de trabajo van por
+  estado (En Gestión, Pendiente, fuera de la campaña, Perdida / Ofertado no interesa) y no incluyen las Ganadas ni las
+  "No público objetivo" (siguen en la base completa). El sector de TES (CNAE) decide industrial o servicios.
 - **Palanca 2027:** 10-249 e industrial/logística/construcción → DIGITALIZA-CV (IVACE); 3-49 servicios → Pyme Digital /
   Cibersegura (Cámara); 0-2 → Auditoría + Alerta Cámara. El sector se estima por palabras clave (razón social y objeto
   social) y manda el confirmado.
