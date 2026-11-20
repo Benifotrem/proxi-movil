@@ -6,6 +6,7 @@
   worker actualizar --excel salida/xxx.xlsx           relee empleados/sector/teléfono rellenados y regenera el Excel
   worker excel [--lote NOMBRE]                        regenera el Excel sin consultar nada
   worker importar-tes --archivo entrada/campana.xlsx  estado, teléfono y empleados del export de la campaña de TES
+  worker webs [--limite 300]                          email y móvil publicados en la web de cada empresa
   worker excluir CIF [--motivo "..."]                 oposición: no vuelve a salir en ningún lote
   worker estado [--lote NOMBRE]
 """
@@ -17,7 +18,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import bdns, borme, cif as cifmod, db, empleados as empmod, entrada, reglas as R, telefonos, tes as tesmod
+from . import bdns, borme, cif as cifmod, contactos, db, empleados as empmod, entrada, reglas as R, telefonos, tes as tesmod
 from .red import Cliente, ErrorConsulta
 from .zonas import Zonas
 
@@ -167,6 +168,8 @@ def clasificar(f, zonas, hoy):
         "tes_estado": t.get("estado") or "", "tes_target": t.get("target") or "", "tes_valor": t.get("valor") or "",
         "tes_ranking": t.get("ranking") or "", "tes_bono": t.get("bono_kd") or "", "tes_visita": t.get("ultima_visita") or "",
         "tes_cobertura": t.get("cobertura_fibra") or "",
+        "email_web": (f["email_web"] if "email_web" in keys else None) or "", "movil_web": (f["movil_web"] if "movil_web" in keys else None) or "",
+        "contacto_fuente": (f["contacto_fuente"] if "contacto_fuente" in keys else None) or "",
         "fuentes": ", ".join(s for s, ok in (("BDNS", f["bdns_estado"] == "ok"), ("BORME", bool(m)), ("TES", bool(t)),
                                              ("archivo de entrada", True)) if ok),
     }
@@ -313,6 +316,31 @@ def buscar_empleados(con, lote, limite, cliente=None, hoy=None, clave=None):
     return hechas
 
 
+def buscar_contactos(con, lote, limite, cliente=None, hoy=None, reintentar=False):
+    """Email y móvil publicados en la web de las empresas que se van a trabajar: primero las de la campaña TES
+    (En Gestión, Pendiente), luego el resto, por encaje y zona. Sin coste de API: solo la web de cada empresa."""
+    hoy = hoy or date.today()
+    if reintentar:
+        con.execute("UPDATE empresas SET contacto_estado=NULL WHERE lote=? AND contacto_estado='error'", (lote,))
+        con.commit()
+    candidatas = [(f, x) for f, x in _candidatas(con, lote, hoy, "contacto_estado IS NULL")
+                  if x["web"] and x["tes_estado"] not in tesmod.NO_TRABAJAR]
+    candidatas.sort(key=lambda c: tesmod.ORDEN.get(c[1]["tes_estado"], 2))  # estable: dentro, por encaje y zona
+    cliente = cliente or Cliente(pausa=(2.0, 4.0), reintentos=1)
+    log.info("Webs: %d empresas con web por revisar; se revisan %d", len(candidatas), min(limite, len(candidatas)))
+    n = 0
+    for f, x in candidatas[:limite]:
+        r = contactos.buscar(cliente, x["web"])
+        con.execute("UPDATE empresas SET email_web=?, movil_web=?, contacto_fuente=?, contacto_estado=? WHERE lote=? AND cif=?",
+                    (r["email"] or None, r["movil"] or None, r["fuente"] or None, r["estado"], lote, f["cif"]))
+        con.commit()
+        n += 1
+        log.info("[%d] %s: %s", n, f["cif"], {"ok": "email/móvil encontrado", "sin_dato": "sin email ni móvil publicados",
+                                              "bloqueada": "la web no permite lectura automática (robots.txt)",
+                                              "error": "web no disponible", "sin_web": "web no válida"}[r["estado"]])
+    return n
+
+
 ALIAS_TELEFONO = ("TELEFONO", "TELÉFONO", "TLFNO", "TLF", "TEL", "MOVIL", "MÓVIL", "PHONE", "FIJO", "CONTACTO")
 
 
@@ -424,6 +452,10 @@ def main(argv=None):
     a = sub.add_parser("importar-tes")
     a.add_argument("--archivo", required=True)
     a.add_argument("--lote")
+    a = sub.add_parser("webs")
+    a.add_argument("--lote")
+    a.add_argument("--limite", type=int, default=300)
+    a.add_argument("--reintentar", action="store_true", help="vuelve a probar las webs que dieron error")
     a = sub.add_parser("excluir")
     a.add_argument("cif")
     a.add_argument("--motivo", default="Oposición al tratamiento")
@@ -499,6 +531,13 @@ def main(argv=None):
             raise SystemExit(f"No se pudo leer {args.archivo}: {e}") from None
         log.info("Campaña %s: %d targets; %d en el lote %s (%d con empleados, %d teléfonos puestos); %d no están en el lote",
                  r["campana"] or "(sin nombre)", r["targets"], r["en_lote"], lote, r["empleados"], r["telefonos"], r["fuera_lote"])
+        generar_excel(con, lote)
+    elif args.cmd == "webs":
+        lote = args.lote or ultimo_lote(con)
+        try:
+            buscar_contactos(con, lote, args.limite, reintentar=args.reintentar)
+        except KeyboardInterrupt:
+            log.warning("Interrumpido: lo revisado queda guardado; vuelve a lanzar el mismo comando para seguir.")
         generar_excel(con, lote)
     elif args.cmd == "excluir":
         excluir(con, args.cif, args.motivo)
