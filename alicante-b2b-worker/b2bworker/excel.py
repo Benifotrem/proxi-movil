@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from . import reglas as R
+from .tes import NO_TRABAJAR, ORDEN as ORDEN_TES, SIN_CAMPANA
 
 CABECERA = PatternFill("solid", fgColor="1F2937")
 EDITABLE = PatternFill("solid", fgColor="FFF7D6")
@@ -29,6 +30,9 @@ BASE = [
     ("Web", "web"), ("Categoría (Google)", "categoria"),
     ("Segmento", "segmento"), ("Palanca recomendada", "palanca"), ("Prioridad", "prioridad"),
     ("Motivo descarte", "descarte"), ("Estado consulta", "consulta"), ("Fuentes", "fuentes"),
+    ("Estado TES", "tes_estado"), ("Id Target TES", "tes_target"), ("Valor potencial (TES)", "tes_valor"),
+    ("Ranking prioritario (TES)", "tes_ranking"), ("Bono KD (TES)", "tes_bono"), ("Última visita (TES)", "tes_visita"),
+    ("Cobertura fibra Telefónica (TES)", "tes_cobertura"),
 ]
 EDITABLES = {"sector_conf", "emp_conf", "telefono"}
 
@@ -81,7 +85,14 @@ def _formulas(col):
 def generar(ruta, registros, contexto):
     """registros: dicts ya clasificados (ver cli.clasificar). contexto: datos para el resumen."""
     wb = Workbook()
+    hay_tes = bool(contexto.get("campana_tes"))
+    for x in registros:
+        if hay_tes and not x.get("tes_estado"):
+            x["tes_estado"] = SIN_CAMPANA
     validos = [x for x in registros if x["prioridad"] != "DESCARTADA"]
+    # Pestañas de trabajo: sin las que TES ya da por ganadas o fuera de objetivo (siguen en la base completa).
+    trabajo = [x for x in validos if x.get("tes_estado") not in NO_TRABAJAR]
+    orden_tes = lambda x: ORDEN_TES.get(x.get("tes_estado") if x.get("tes_estado") != SIN_CAMPANA else "", 2)  # noqa: E731
     orden_ruta = lambda x: (x["zona_idx"], x["cp"] or "", x["municipio"] or "", x["prioridad"])  # noqa: E731
 
     # 1. Resumen ejecutivo
@@ -94,6 +105,10 @@ def generar(ruta, registros, contexto):
              ("Descartados", len(registros) - len(validos)), ("", "")]
     filas.append(("Descartes por motivo", ""))
     filas += [(f"  {m}", n) for m, n in Counter(x["descarte"] or R.S250 for x in registros if x["prioridad"] == "DESCARTADA").most_common()]
+    if hay_tes:
+        filas += [("", ""), ("Campaña TES", contexto["campana_tes"])]
+        filas += [(f"  {e}", n) for e, n in Counter(x["tes_estado"] for x in registros).most_common()]
+        filas.append(("  Fuera de las pestañas de trabajo (Ganada / No público objetivo)", sum(1 for x in validos if x["tes_estado"] in NO_TRABAJAR)))
     filas += [("", ""), ("Reparto por prioridad", "")]
     filas += [(f"  Prioridad {p}", sum(1 for x in validos if x["prioridad"] == p)) for p in "ABC"]
     filas += [("", ""), ("Reparto por zona (válidos)", "")]
@@ -123,27 +138,28 @@ def generar(ruta, registros, contexto):
 
     # 1b. Listado para la puerta fría: empresas que encajan en alguna ayuda de la ficha 2027, con lo justo.
     from .fichas import evaluar
-    col_pf = ["Encaje", "Por qué llamar ahora", "Apertura por teléfono", "Apertura en visita", "Ayudas que encajan", "Próxima ventana", "Razón social", "CIF",
+    col_pf = ["Estado TES", "Encaje", "Por qué llamar ahora", "Apertura por teléfono", "Apertura en visita", "Ayudas que encajan", "Próxima ventana", "Razón social", "CIF",
               "A qué se dedica", "Empleados (estimado)", "Municipio", "Zona",
-              "Dirección", "Preguntar por (BORME)", "Teléfono ✎", "Web", "Ayudas 3 años (minimis)", "Confirmar en la llamada"]
-    candidatas = [(x, e) for x in validos if x["consulta"] == "ok" and (e := evaluar(x))]
+              "Dirección", "Preguntar por (BORME)", "Teléfono ✎", "Web", "Ayudas 3 años (minimis)", "Confirmar en la llamada", "Id Target TES"]
+    candidatas = [(x, e) for x in trabajo if x["consulta"] == "ok" and (e := evaluar(x))]
     orden_enc = {"Alto": 0, "Medio": 1, "Base": 2}
     ws = wb.create_sheet("Listado_Puerta_Fria")
     _tabla(ws, col_pf, [
-        [e["encaje"], e["frase"], e["guion_telefono"], e["guion_visita"], e["ayudas"], e["ventana"], x["razon_social"], x["cif"],
+        [x["tes_estado"], e["encaje"], e["frase"], e["guion_telefono"], e["guion_visita"], e["ayudas"], e["ventana"], x["razon_social"], x["cif"],
          x["actividad"], x["emp_conf"] if x["emp_conf"] is not None else x["emp_est"], x["municipio"], x["zona"], x["direccion"],
-         x["administradores"].split("; ")[0] if x["administradores"] else "", x["telefono"], x["web"], e["minimis"], e["confirmar"]]
-        for x, e in sorted(candidatas, key=lambda p: (orden_enc[p[1]["encaje"]], p[0]["zona_idx"], p[0]["municipio"] or ""))])
+         x["administradores"].split("; ")[0] if x["administradores"] else "", x["telefono"], x["web"], e["minimis"], e["confirmar"], x["tes_target"]]
+        for x, e in sorted(candidatas, key=lambda p: (orden_tes(p[0]), orden_enc[p[1]["encaje"]], p[0]["zona_idx"], p[0]["municipio"] or ""))])
     fondo_enc = {"Alto": FONDO["A"], "Medio": FONDO["B"], "Base": FONDO["C"]}
     for fila in ws.iter_rows(min_row=2):
         for c in fila:
-            c.fill = fondo_enc.get(fila[0].value, FONDO["C"])
-        for i in (1, 2, 3):
+            c.fill = fondo_enc.get(fila[1].value, FONDO["C"])
+        for i in (2, 3, 4):
             fila[i].alignment = Alignment(wrap_text=True, vertical="top")
-    ws.column_dimensions["B"].width = 60
-    ws.column_dimensions["C"].width = 80
-    ws.column_dimensions["D"].width = 70
-    ws.column_dimensions["E"].width = 48
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["C"].width = 60
+    ws.column_dimensions["D"].width = 80
+    ws.column_dimensions["E"].width = 70
+    ws.column_dimensions["F"].width = 48
     filas_resumen = [("Listado para puerta fría (ficha 2027)", ""), ("  Empresas que encajan", len(candidatas))]
     filas_resumen += [(f"  Encaje {k}", sum(1 for _, e in candidatas if e["encaje"] == k)) for k in ("Alto", "Medio", "Base")]
     filas_resumen.append(("  Fuera por superar el límite de minimis (300.000 € en 3 años)", sum(1 for x in validos if (x.get("importe_3a") or 0) >= 300000)))
@@ -156,30 +172,32 @@ def generar(ruta, registros, contexto):
 
     # 2. Prioridad A
     col_a = ["Zona", "Municipio", "CP", "CIF", "Razón social", "Dirección", "Teléfono", "Administradores (BORME)", "Motivo prioridad",
-             "Kit Digital fecha", "Segmento", "Palanca recomendada"]
-    a = sorted([x for x in validos if x["prioridad"] == "A"], key=lambda x: (x["zona_idx"], x["municipio"] or ""))
+             "Kit Digital fecha", "Segmento", "Palanca recomendada", "Estado TES", "Id Target TES"]
+    a = sorted([x for x in trabajo if x["prioridad"] == "A"], key=lambda x: (orden_tes(x), x["zona_idx"], x["municipio"] or ""))
     _tabla(wb.create_sheet("Prioridad_A_Urgentes"), col_a, [
         [x["zona"], x["municipio"], x["cp"], x["cif"], x["razon_social"], x["direccion"], x["telefono"], x["administradores"],
-         x["motivo_prioridad"], x["kit_fecha"], x["segmento"], x["palanca"]] for x in a])
+         x["motivo_prioridad"], x["kit_fecha"], x["segmento"], x["palanca"], x["tes_estado"], x["tes_target"]] for x in a])
 
     # 3. Ruta por zonas (A y B)
-    col_r = ["Zona", "CP", "Municipio", "Prioridad", "CIF", "Razón social", "Dirección", "Teléfono", "Segmento", "Palanca recomendada", "Administradores (BORME)"]
+    col_r = ["Zona", "CP", "Municipio", "Prioridad", "CIF", "Razón social", "Dirección", "Teléfono", "Segmento", "Palanca recomendada",
+             "Administradores (BORME)", "Estado TES", "Id Target TES"]
     _tabla(wb.create_sheet("Ruta_Por_Zonas_Alicante"), col_r, [
         [x["zona"], x["cp"], x["municipio"], x["prioridad"], x["cif"], x["razon_social"], x["direccion"], x["telefono"], x["segmento"],
-         x["palanca"], x["administradores"]] for x in sorted([x for x in validos if x["prioridad"] in "AB"], key=orden_ruta)], prioridad_col=3)
+         x["palanca"], x["administradores"], x["tes_estado"], x["tes_target"]]
+        for x in sorted([x for x in trabajo if x["prioridad"] in "AB"], key=orden_ruta)], prioridad_col=3)
 
     # 3b. Por cualificar en la llamada: sin empleados o sin teléfono, con prioridad provisional por subvenciones
     col_q = ["Zona", "CP", "Municipio", "Pista", "CIF", "Razón social", "Dirección", "Administradores (BORME)", "Kit Digital segmento",
-             "Detalle ayudas (últimas)", "Qué preguntar"]
+             "Detalle ayudas (últimas)", "Qué preguntar", "Estado TES", "Id Target TES"]
     # Solo las ya consultadas: en un piloto (--limit) el resto aún no tiene datos.
-    pendientes = [x for x in validos if x["prioridad"] == "C" and x["segmento"] != R.S3 and x["consulta"] == "ok"]
+    pendientes = [x for x in trabajo if x["prioridad"] == "C" and x["segmento"] != R.S3 and x["consulta"] == "ok"]
     pista = lambda x: 0 if (x["ivace"] or x["camara"]) else 1 if x["kit_fecha"] else 2 if x["n_ayudas"] else 3  # noqa: E731
     _tabla(wb.create_sheet("Por_Cualificar_Llamada"), col_q, [
         [x["zona"], x["cp"], x["municipio"], ["Historial IVACE/Cámara", "Tuvo Kit Digital", "Otras ayudas públicas", "Sin historial de ayudas"][pista(x)], x["cif"], x["razon_social"],
          x["direccion"], x["administradores"], x["kit_segmento"], x["detalle_ayudas"],
          "; ".join(p for p, falta in (("nº de empleados", not x["emp_conf"]), ("sector (industrial o servicios)", not x["sector_conf"] and not x["sector_est"]),
-                                      ("teléfono de contacto", not x["telefono"])) if falta)]
-        for x in sorted(pendientes, key=lambda x: (pista(x), x["zona_idx"], x["cp"] or ""))])
+                                      ("teléfono de contacto", not x["telefono"])) if falta), x["tes_estado"], x["tes_target"]]
+        for x in sorted(pendientes, key=lambda x: (orden_tes(x), pista(x), x["zona_idx"], x["cp"] or ""))])
 
     # 4. Base completa con fórmulas
     ws = wb.create_sheet("Base_Completa_Enriquecida")

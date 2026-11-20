@@ -5,6 +5,7 @@
   worker borme-probar --fecha 2026-11-11             prueba el lector con un día (sin tocar ningún lote)
   worker actualizar --excel salida/xxx.xlsx           relee empleados/sector/teléfono rellenados y regenera el Excel
   worker excel [--lote NOMBRE]                        regenera el Excel sin consultar nada
+  worker importar-tes --archivo entrada/campana.xlsx  estado, teléfono y empleados del export de la campaña de TES
   worker excluir CIF [--motivo "..."]                 oposición: no vuelve a salir en ningún lote
   worker estado [--lote NOMBRE]
 """
@@ -16,7 +17,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import bdns, borme, cif as cifmod, db, empleados as empmod, entrada, reglas as R, telefonos
+from . import bdns, borme, cif as cifmod, db, empleados as empmod, entrada, reglas as R, telefonos, tes as tesmod
 from .red import Cliente, ErrorConsulta
 from .zonas import Zonas
 
@@ -104,9 +105,16 @@ def clasificar(f, zonas, hoy):
     b = db.cargar_json(f["bdns"], {}) or {}
     m = db.cargar_json(f["borme"], {}) or {}
     descarte = f["motivo_descarte"] or R.descarte_mercantil(m, hoy)
+    t = db.cargar_json(f["tes"], {}) if "tes" in f.keys() else {}
+    t = t or {}
     seg_est = R.segmento_por_rango(b.get("kit_segmento"))
     web_min, web_max, web_fuente = (f[k] if k in f.keys() else None for k in ("emp_web_min", "emp_web_max", "emp_web_fuente"))
-    if b.get("kit_segmento"):
+    if t.get("empleados") is not None:
+        # Plantilla según TES (Telefónica): manda sobre el segmento del Kit Digital y la estimación web.
+        seg_est, emp_est = R.segmento_por_empleados(t["empleados"]), f"{t['empleados']} (TES)"
+        if seg_est == R.S250:
+            seg_est, emp_est = "", f"verificar plantilla ({t['empleados']} según TES)"
+    elif b.get("kit_segmento"):
         emp_est = f"{b['kit_segmento']} (segmento de su Kit Digital)"
     elif web_min is not None:
         seg_est = R.segmento_por_estimacion(web_min, web_max)
@@ -120,7 +128,8 @@ def clasificar(f, zonas, hoy):
     segmento = R.segmento_por_empleados(emp) if emp is not None else seg_est
     keys = f.keys()
     web, categoria, tel_fuente = (f[k] if k in keys else None for k in ("web", "categoria", "tel_fuente"))
-    sector_est = R.sector_estimado(f["razon_social"], m.get("objeto"), categoria)
+    web = web or t.get("web")
+    sector_est = R.sector_cnae(t.get("sector")) or R.sector_estimado(f["razon_social"], m.get("objeto"), categoria)
     sector = f["sector_conf"] or sector_est
     telefono = f["telefono"] if R.telefono_valido(f["telefono"]) else ""
     prioridad = R.prioridad(descarte, segmento, b.get("kit_urgente"), b.get("ivace"), b.get("camara"), telefono)
@@ -149,13 +158,17 @@ def clasificar(f, zonas, hoy):
         "ivace": b.get("ivace") or 0, "camara": b.get("camara") or 0,
         "solvencia": "SÍ" if (b.get("recientes") or 0) > 0 else "", "n_ayudas": b.get("n_concesiones") or 0,
         "detalle_ayudas": b.get("detalle") or "", "web": web or "", "categoria": categoria or "", "emp_est": emp_est,
-        "actividad": categoria or (m.get("objeto") or "")[:140],
+        "actividad": t.get("sector") or categoria or (m.get("objeto") or "")[:140],
         "tel_fuente": (tel_fuente or "confirmado") if telefono else "",
         "diputacion": b.get("diputacion") or 0, "importe_3a": b.get("importe_3a") or 0, "ultima_organismo": b.get("ultima_organismo"),
         "sector_est": sector_est, "sector_conf": f["sector_conf"] or "", "seg_est": seg_est,
         "emp_conf": emp, "telefono": telefono, "segmento": segmento, "palanca": "—" if descarte else R.palanca(segmento, sector),
         "prioridad": prioridad, "motivo_prioridad": motivo_prio, "descarte": descarte or "", "consulta": consulta,
-        "fuentes": ", ".join(s for s, ok in (("BDNS", f["bdns_estado"] == "ok"), ("BORME", bool(m)), ("archivo de entrada", True)) if ok),
+        "tes_estado": t.get("estado") or "", "tes_target": t.get("target") or "", "tes_valor": t.get("valor") or "",
+        "tes_ranking": t.get("ranking") or "", "tes_bono": t.get("bono_kd") or "", "tes_visita": t.get("ultima_visita") or "",
+        "tes_cobertura": t.get("cobertura_fibra") or "",
+        "fuentes": ", ".join(s for s, ok in (("BDNS", f["bdns_estado"] == "ok"), ("BORME", bool(m)), ("TES", bool(t)),
+                                             ("archivo de entrada", True)) if ok),
     }
 
 
@@ -165,7 +178,8 @@ def generar_excel(con, lote, hoy=None):
     filas = con.execute("SELECT * FROM empresas WHERE lote = ? ORDER BY fila", (lote,)).fetchall()
     registros = [clasificar(f, zonas, hoy) for f in filas]
     desde, hasta, dias = borme.cobertura(con)
-    contexto = {"lote": lote, "zonas": zonas.orden,
+    campanas = sorted({(db.cargar_json(f["tes"], {}) or {}).get("campana") or "" for f in filas if f["tes"]} - {""})
+    contexto = {"lote": lote, "zonas": zonas.orden, "campana_tes": ", ".join(campanas),
                 "bdns_ok": sum(1 for f in filas if f["bdns_estado"] == "ok"), "bdns_error": sum(1 for f in filas if f["bdns_estado"] == "error"),
                 "borme_cobertura": f"{dias} días publicados entre {desde} y {hasta}" if dias else "sin índice (estado y antigüedad sin dato)"}
     from .excel import generar
@@ -335,6 +349,29 @@ def importar_telefonos(con, lote, ruta, hoja=None):
     return n
 
 
+def importar_tes(con, lote, ruta):
+    """Export de la campaña de TES: estado del target, teléfono, empleados, web y datos comerciales de cada CIF.
+    El teléfono de TES sustituye al de Google, pero no al de tu archivo ni al confirmado en el Excel.
+    Cada importación sustituye a la anterior (un CIF que ya no está en el export queda fuera de la campaña)."""
+    campana, datos = tesmod.leer(ruta)
+    en_lote = {r[0] for r in con.execute("SELECT cif FROM empresas WHERE lote=?", (lote,))}
+    con.execute("UPDATE empresas SET tes=NULL WHERE lote=?", (lote,))
+    res = {"campana": campana, "targets": len(datos), "en_lote": 0, "fuera_lote": 0, "telefonos": 0, "empleados": 0}
+    for cif, d in datos.items():
+        if cif not in en_lote:
+            res["fuera_lote"] += 1
+            continue
+        res["en_lote"] += 1
+        res["empleados"] += d["empleados"] is not None
+        con.execute("UPDATE empresas SET tes=? WHERE lote=? AND cif=?", (json.dumps(d, ensure_ascii=False), lote, cif))
+        if d["telefono"]:
+            res["telefonos"] += con.execute(
+                "UPDATE empresas SET telefono=?, tel_fuente='TES', tel_estado='importado' WHERE lote=? AND cif=? "
+                "AND (telefono IS NULL OR tel_fuente LIKE 'Google%' OR tel_fuente='TES')", (d["telefono"], lote, cif)).rowcount
+    con.commit()
+    return res
+
+
 def excluir(con, cif, motivo):
     cif = cifmod.normalizar(cif)
     con.execute("INSERT OR REPLACE INTO exclusiones VALUES (?, ?, ?)", (cif, motivo, date.today().isoformat()))
@@ -383,6 +420,9 @@ def main(argv=None):
     a = sub.add_parser("importar-telefonos")
     a.add_argument("--archivo", required=True)
     a.add_argument("--hoja")
+    a.add_argument("--lote")
+    a = sub.add_parser("importar-tes")
+    a.add_argument("--archivo", required=True)
     a.add_argument("--lote")
     a = sub.add_parser("excluir")
     a.add_argument("cif")
@@ -450,6 +490,15 @@ def main(argv=None):
     elif args.cmd == "importar-telefonos":
         lote = args.lote or ultimo_lote(con)
         log.info("Teléfonos importados en el lote %s: %d", lote, importar_telefonos(con, lote, args.archivo, args.hoja))
+        generar_excel(con, lote)
+    elif args.cmd == "importar-tes":
+        lote = args.lote or ultimo_lote(con)
+        try:
+            r = importar_tes(con, lote, args.archivo)
+        except ValueError as e:
+            raise SystemExit(f"No se pudo leer {args.archivo}: {e}") from None
+        log.info("Campaña %s: %d targets; %d en el lote %s (%d con empleados, %d teléfonos puestos); %d no están en el lote",
+                 r["campana"] or "(sin nombre)", r["targets"], r["en_lote"], lote, r["empleados"], r["telefonos"], r["fuera_lote"])
         generar_excel(con, lote)
     elif args.cmd == "excluir":
         excluir(con, args.cif, args.motivo)
