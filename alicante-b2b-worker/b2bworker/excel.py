@@ -33,6 +33,7 @@ BASE = [
     ("Estado TES", "tes_estado"), ("Id Target TES", "tes_target"), ("Valor potencial (TES)", "tes_valor"),
     ("Ranking prioritario (TES)", "tes_ranking"), ("Bono KD (TES)", "tes_bono"), ("Última visita (TES)", "tes_visita"),
     ("Cobertura fibra Telefónica (TES)", "tes_cobertura"),
+    ("Email publicado (web)", "email_web"), ("Móvil publicado (web)", "movil_web"), ("Página de origen", "contacto_fuente"),
 ]
 EDITABLES = {"sector_conf", "emp_conf", "telefono"}
 
@@ -140,14 +141,14 @@ def generar(ruta, registros, contexto):
     from .fichas import evaluar
     col_pf = ["Estado TES", "Encaje", "Por qué llamar ahora", "Apertura por teléfono", "Apertura en visita", "Ayudas que encajan", "Próxima ventana", "Razón social", "CIF",
               "A qué se dedica", "Empleados (estimado)", "Municipio", "Zona",
-              "Dirección", "Preguntar por (BORME)", "Teléfono ✎", "Web", "Ayudas 3 años (minimis)", "Confirmar en la llamada", "Id Target TES"]
+              "Dirección", "Preguntar por (BORME)", "Teléfono ✎", "Email publicado (web)", "Móvil publicado (web)", "Web", "Ayudas 3 años (minimis)", "Confirmar en la llamada", "Id Target TES"]
     candidatas = [(x, e) for x in trabajo if x["consulta"] == "ok" and (e := evaluar(x))]
     orden_enc = {"Alto": 0, "Medio": 1, "Base": 2}
     ws = wb.create_sheet("Listado_Puerta_Fria")
     _tabla(ws, col_pf, [
         [x["tes_estado"], e["encaje"], e["frase"], e["guion_telefono"], e["guion_visita"], e["ayudas"], e["ventana"], x["razon_social"], x["cif"],
          x["actividad"], x["emp_conf"] if x["emp_conf"] is not None else x["emp_est"], x["municipio"], x["zona"], x["direccion"],
-         x["administradores"].split("; ")[0] if x["administradores"] else "", x["telefono"], x["web"], e["minimis"], e["confirmar"], x["tes_target"]]
+         x["administradores"].split("; ")[0] if x["administradores"] else "", x["telefono"], x.get("email_web", ""), x.get("movil_web", ""), x["web"], e["minimis"], e["confirmar"], x["tes_target"]]
         for x, e in sorted(candidatas, key=lambda p: (orden_tes(p[0]), orden_enc[p[1]["encaje"]], p[0]["zona_idx"], p[0]["municipio"] or ""))])
     fondo_enc = {"Alto": FONDO["A"], "Medio": FONDO["B"], "Base": FONDO["C"]}
     for fila in ws.iter_rows(min_row=2):

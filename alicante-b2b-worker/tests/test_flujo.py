@@ -203,6 +203,25 @@ class Flujo(unittest.TestCase):
         estados = {base.cell(i, 1).value: base.cell(i, cab.index("Estado TES") + 1).value for i in range(2, base.max_row + 1)}
         self.assertEqual(estados["A28015865"], "Ganada", "en la base completa sigue estando")
 
+        # Email y móvil publicados en su web (solo las que se van a trabajar y tienen web).
+        class Web:
+            urls = []
+
+            def get(self, url, timeout=30, **_):
+                self.urls.append(url)
+                if url == "https://www.comunidad.es/":
+                    return '<a href="mailto:info@comunidad.es">info</a> Móvil 612 345 678'
+                raise ErrorConsulta("HTTP 404")
+        web = Web()
+        self.assertEqual(cli.buscar_contactos(self.con, "cartera", 50, cliente=web, hoy=HOY), 1)
+        j = self.registros()["J12345674"]
+        self.assertEqual((j["email_web"], j["movil_web"], j["contacto_fuente"]), ("info@comunidad.es", "612 34 56 78", "https://www.comunidad.es"))
+        self.assertEqual(cli.buscar_contactos(self.con, "cartera", 50, cliente=web, hoy=HOY), 0, "no repite las ya revisadas")
+        wb = load_workbook(cli.generar_excel(self.con, "cartera", hoy=HOY))
+        hpf = [c.value for c in wb["Listado_Puerta_Fria"][1]]
+        fila = next(r for r in wb["Listado_Puerta_Fria"].iter_rows(min_row=2, values_only=True) if r[8] == "J12345674")
+        self.assertEqual(fila[hpf.index("Email publicado (web)")], "info@comunidad.es")
+
         # Un teléfono de tu archivo no se pisa; una nueva importación sustituye a la anterior.
         self.con.execute("UPDATE empresas SET telefono='966 00 00 00', tel_fuente='tu archivo' WHERE cif='B12345674'")
         cli.importar_tes(self.con, "cartera", self.export_tes([
