@@ -52,5 +52,27 @@ class Contactos(unittest.TestCase):
         self.assertEqual(contactos.buscar(ClienteFalso({"https://vacia.es/": "<p>Hola</p>"}), "vacia.es")["estado"], "sin_dato")
 
 
+class Ipv4(unittest.TestCase):
+    def test_forzar_ipv4(self):
+        import socket
+        from b2bworker import red
+        original, llamadas = socket.getaddrinfo, []
+
+        def falso(host, port, family=0, *a, **k):
+            llamadas.append(family)
+            if host == "solo6.es" and family == socket.AF_INET:
+                raise socket.gaierror("sin IPv4")
+            return [(family, None, None, "", (host, port))]
+        socket.getaddrinfo = falso
+        try:
+            red.forzar_ipv4()
+            self.assertEqual(socket.getaddrinfo("web.es", 443)[0][0], socket.AF_INET)
+            self.assertEqual(socket.getaddrinfo("solo6.es", 443)[0][0], 0, "si no hay IPv4, se usa lo que haya")
+            red.forzar_ipv4()
+            self.assertTrue(socket.getaddrinfo._solo_ipv4)
+        finally:
+            socket.getaddrinfo = original
+
+
 if __name__ == "__main__":
     unittest.main()

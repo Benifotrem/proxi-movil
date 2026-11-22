@@ -326,7 +326,10 @@ def buscar_contactos(con, lote, limite, cliente=None, hoy=None, reintentar=False
     candidatas = [(f, x) for f, x in _candidatas(con, lote, hoy, "contacto_estado IS NULL")
                   if x["web"] and x["tes_estado"] not in tesmod.NO_TRABAJAR]
     candidatas.sort(key=lambda c: tesmod.ORDEN.get(c[1]["tes_estado"], 2))  # estable: dentro, por encaje y zona
-    cliente = cliente or Cliente(pausa=(2.0, 4.0), reintentos=1)
+    if cliente is None:
+        from .red import forzar_ipv4
+        forzar_ipv4()
+        cliente = Cliente(pausa=(2.0, 4.0), reintentos=1)
     log.info("Webs: %d empresas con web por revisar; se revisan %d", len(candidatas), min(limite, len(candidatas)))
     n = 0
     for f, x in candidatas[:limite]:
