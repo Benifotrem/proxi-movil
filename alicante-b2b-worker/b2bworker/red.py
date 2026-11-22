@@ -12,6 +12,9 @@ log = logging.getLogger("b2b")
 AGENTE = "alicante-b2b-worker/1.0 (consulta de datos abiertos; contacto en la web del usuario)"
 
 
+ESPERA_MAX = 120  # un Retry-After de una hora no bloquea el lote
+
+
 class ErrorConsulta(Exception):
     pass
 
@@ -71,8 +74,12 @@ class Cliente:
             except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, http.client.HTTPException) as e:
                 ultimo = f"{type(e).__name__}: {e}"[:120]
                 espera = 5 * intento
+            if intento == self.reintentos:
+                break  # sin más intentos: no tiene sentido esperar
+            espera = min(espera, ESPERA_MAX)
             log.warning("  %s: %s (intento %d/%d), esperando %ds", host, ultimo, intento, self.reintentos, espera)
             self.dormir(espera)
+        log.warning("  %s: %s (sin más intentos)", host, ultimo)
         raise ErrorConsulta(ultimo or "sin respuesta")
 
     def json(self, url, cabeceras=None, enviar=None):
