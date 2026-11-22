@@ -50,6 +50,9 @@ class Contactos(unittest.TestCase):
         self.assertNotIn(base + "/", c.urls, "no se lee nada si robots.txt lo prohíbe")
         self.assertEqual(contactos.buscar(ClienteFalso({}), "caida.es")["estado"], "error")
         self.assertEqual(contactos.buscar(ClienteFalso({"https://vacia.es/": "<p>Hola</p>"}), "vacia.es")["estado"], "sin_dato")
+        rota = '<a href="http://[eliminado-tag id=1 name=x]/contacto">x</a><a href="/contacto">ok</a>'
+        c = ClienteFalso({"https://rota.es/": rota, "https://rota.es/contacto": CONTACTO})
+        self.assertEqual(contactos.buscar(c, "rota.es")["estado"], "ok", "un enlace mal formado se ignora")
 
 
 class Ipv4(unittest.TestCase):

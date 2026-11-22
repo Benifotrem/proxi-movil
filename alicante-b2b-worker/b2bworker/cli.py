@@ -333,7 +333,11 @@ def buscar_contactos(con, lote, limite, cliente=None, hoy=None, reintentar=False
     log.info("Webs: %d empresas con web por revisar; se revisan %d", len(candidatas), min(limite, len(candidatas)))
     n = 0
     for f, x in candidatas[:limite]:
-        r = contactos.buscar(cliente, x["web"])
+        try:
+            r = contactos.buscar(cliente, x["web"])
+        except Exception as e:  # una web rara nunca debe parar el lote
+            log.warning("  %s: error inesperado leyendo %s (%s)", f["cif"], x["web"], f"{type(e).__name__}: {e}"[:120])
+            r = {"email": "", "movil": "", "fuente": "", "estado": "error"}
         con.execute("UPDATE empresas SET email_web=?, movil_web=?, contacto_fuente=?, contacto_estado=? WHERE lote=? AND cif=?",
                     (r["email"] or None, r["movil"] or None, r["fuente"] or None, r["estado"], lote, f["cif"]))
         con.commit()

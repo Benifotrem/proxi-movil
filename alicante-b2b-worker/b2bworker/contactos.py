@@ -69,8 +69,12 @@ def _enlaces(pagina, base):
     host = urllib.parse.urlsplit(base).hostname or ""
     res = []
     for h in ENLACE.findall(pagina):
-        url = urllib.parse.urljoin(base + "/", h.strip())
-        partes = urllib.parse.urlsplit(url)
+        try:
+            url = urllib.parse.urljoin(base + "/", h.strip())
+            partes = urllib.parse.urlsplit(url)
+            partes.hostname  # noqa: B018  (valida el host: un enlace mal formado lanza ValueError)
+        except ValueError:
+            continue  # enlaces rotos de la web (p. ej. "[eliminado-tag ...]"): se ignoran
         if partes.scheme not in ("http", "https") or (partes.hostname or "").removeprefix("www.") != host.removeprefix("www."):
             continue
         if any(p in partes.path.lower() for p in PAGINAS) and not partes.path.lower().endswith(EXT + (".pdf",)) and url not in res:

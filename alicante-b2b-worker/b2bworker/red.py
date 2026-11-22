@@ -1,5 +1,6 @@
 """HTTP con ritmo bajo: pausa con variación entre peticiones al mismo host y reintentos con espera creciente.
 Conexión directa a fuentes públicas (BDNS, BOE); respeta los límites de cada servicio, no los elude."""
+import http.client
 import json
 import logging
 import random
@@ -48,6 +49,10 @@ class Cliente:
     def get(self, url, cabeceras=None, binario=False, timeout=30, cuerpo=None):
         host = url.split("/")[2]
         ultimo = None
+        try:
+            urllib.request.Request(url)
+        except ValueError as e:  # URL mal formada: no se reintenta
+            raise ErrorConsulta(f"URL no válida: {e}"[:120]) from None
         for intento in range(1, self.reintentos + 1):
             self._turno(host)
             req = urllib.request.Request(url, data=cuerpo, method="POST" if cuerpo is not None else "GET",
@@ -63,7 +68,7 @@ class Cliente:
                 # 429/5xx: el servicio pide calma; se espera más en cada intento.
                 retry = e.headers.get("Retry-After") if e.headers else None
                 espera = int(retry) if retry and retry.isdigit() else 10 * intento
-            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, http.client.HTTPException) as e:
                 ultimo = f"{type(e).__name__}: {e}"[:120]
                 espera = 5 * intento
             log.warning("  %s: %s (intento %d/%d), esperando %ds", host, ultimo, intento, self.reintentos, espera)
