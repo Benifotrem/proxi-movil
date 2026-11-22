@@ -55,6 +55,28 @@ class Contactos(unittest.TestCase):
         self.assertEqual(contactos.buscar(c, "rota.es")["estado"], "ok", "un enlace mal formado se ignora")
 
 
+class Esperas(unittest.TestCase):
+    def test_retry_after_no_bloquea(self):
+        import urllib.error
+        from email.message import Message
+        from b2bworker import red
+        cab = Message()
+        cab["Retry-After"] = "3600"
+
+        def abrir(req, timeout=30):
+            raise urllib.error.HTTPError(req.full_url, 503, "Busy", cab, None)
+        esperas = []
+        c = red.Cliente(pausa=(0, 0), reintentos=1, dormir=esperas.append, abrir=abrir)
+        with self.assertRaises(ErrorConsulta):
+            c.get("https://ocupada.es/")
+        self.assertEqual([e for e in esperas if e > 1], [], "con un solo intento no se espera nada")
+        esperas.clear()
+        c = red.Cliente(pausa=(0, 0), reintentos=3, dormir=esperas.append, abrir=abrir)
+        with self.assertRaises(ErrorConsulta):
+            c.get("https://ocupada.es/")
+        self.assertEqual([e for e in esperas if e > 1], [red.ESPERA_MAX, red.ESPERA_MAX], "nunca más de ESPERA_MAX, y no tras el último")
+
+
 class Ipv4(unittest.TestCase):
     def test_forzar_ipv4(self):
         import socket
