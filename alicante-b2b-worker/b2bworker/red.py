@@ -15,6 +15,25 @@ class ErrorConsulta(Exception):
     pass
 
 
+def forzar_ipv4():
+    """Resuelve solo direcciones IPv4 (el HP no tiene salida IPv6: las webs que anuncian IPv6 daban
+    'Network is unreachable'). Si un host solo tiene IPv6, se usa lo que haya."""
+    import socket
+    if getattr(socket.getaddrinfo, "_solo_ipv4", False):
+        return
+    original = socket.getaddrinfo
+
+    def getaddrinfo(host, port, family=0, *args, **kwargs):
+        if family in (0, socket.AF_UNSPEC):
+            try:
+                return original(host, port, socket.AF_INET, *args, **kwargs)
+            except socket.gaierror:
+                pass
+        return original(host, port, family, *args, **kwargs)
+    getaddrinfo._solo_ipv4 = True
+    socket.getaddrinfo = getaddrinfo
+
+
 class Cliente:
     def __init__(self, pausa=(1.0, 2.0), reintentos=3, dormir=time.sleep, abrir=urllib.request.urlopen):
         self.pausa, self.reintentos, self.dormir, self.abrir = pausa, reintentos, dormir, abrir
